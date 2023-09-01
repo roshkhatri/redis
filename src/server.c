@@ -469,7 +469,8 @@ dictType dbExpiresDictType = {
     dictSdsKeyCompare,          /* key compare */
     NULL,                       /* key destructor */
     NULL,                       /* val destructor */
-    dictExpandAllowed           /* allow to expand */
+    dictExpandAllowed,           /* allow to expand */
+    dictRehashingStarted,
 };
 
 /* Command table. sds string -> command struct pointer. */
@@ -589,24 +590,26 @@ int htNeedsResize(dict *dict) {
 /* If the percentage of used slots in the HT reaches HASHTABLE_MIN_FILL
  * we resize the hash table to save memory */
 void tryResizeHashTables(int dbid) {
-    dict *d;
     dbIterator dbit;
     redisDb *db = &server.db[dbid];
-    dbIteratorInit(&dbit, db);
+    int slot = 0;
+    dbIteratorInit(&dbit, db, DB_DICT);
     if (db->resize_cursor != -1) {
         dbit.next_slot = db->resize_cursor;
     }
     for (int i = 0; i < CRON_DICTS_PER_CALL; i++) {
-        d = dbIteratorNextDict(&dbit);
-        if (!d) break;
-        if (htNeedsResize(d))
-            dictResize(d);
+        slot = dbIteratorNextSlot(&dbit);
+        if (slot == -1) break;
+        if (!db->dict[slot]) break;
+        if (htNeedsResize(db->dict[slot]))
+            dictResize(db->dict[slot]);
+        if (!db->expires[slot]) break;
+        if (htNeedsResize(db->expires[slot]))
+            dictResize(db->expires[slot]);
     }
     /* Save current iterator position in the resize_cursor. */
     db->resize_cursor = dbit.next_slot;
 
-    if (htNeedsResize(db->expires))
-        dictResize(db->expires);
 }
 
 /* Our hash table implementation performs rehashing incrementally while
@@ -617,7 +620,7 @@ void tryResizeHashTables(int dbid) {
  * The function returns 1 if some rehashing was performed, otherwise 0
  * is returned. */
 int incrementallyRehash(int dbid) {
-    /* Rehash main dictionary. */
+    /* Rehash main and expire dictionary . */
     if (server.cluster_enabled) {
         listNode *node, *nextNode;
         monotime timer;
@@ -643,11 +646,6 @@ int incrementallyRehash(int dbid) {
             dictRehashMilliseconds(d, INCREMENTAL_REHASHING_THRESHOLD_MS);
             return 1; /* already used our millisecond for this loop... */
         }
-    }
-    /* Rehash expires. */
-    if (dictIsRehashing(server.db[dbid].expires)) {
-        dictRehashMilliseconds(server.db[dbid].expires, INCREMENTAL_REHASHING_THRESHOLD_MS);
-        return 1; /* already used our millisecond for this loop... */
     }
     return 0;
 }
@@ -1374,9 +1372,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             for (j = 0; j < server.dbnum; j++) {
                 long long size, used, vkeys;
 
-                size = dbSlots(&server.db[j]);
-                used = dbSize(&server.db[j]);
-                vkeys = dictSize(server.db[j].expires);
+                size = dbSlots(&server.db[j], DB_DICT);
+                used = dbSize(&server.db[j], DB_DICT);
+                vkeys = dbSize(&server.db[j], DB_EXPIRE);
                 if (used || vkeys) {
                     serverLog(LL_VERBOSE,"DB %d: %lld keys (%lld volatile) in %lld slots HT.",j,used,vkeys,size);
                 }
@@ -2657,7 +2655,7 @@ void initServer(void) {
     for (j = 0; j < server.dbnum; j++) {
         int slotCount = (server.cluster_enabled) ? CLUSTER_SLOTS : 1;
         server.db[j].dict = dictCreateMultiple(&dbDictType, slotCount);
-        server.db[j].expires = dictCreate(&dbExpiresDictType);
+        server.db[j].expires = dictCreateMultiple(&dbExpiresDictType,slotCount);
         server.db[j].expires_cursor = 0;
         server.db[j].resize_cursor = 0;
         server.db[j].blocking_keys = dictCreate(&keylistDictType);
@@ -6245,8 +6243,8 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         for (j = 0; j < server.dbnum; j++) {
             long long keys, vkeys;
 
-            keys = dbSize(&server.db[j]);
-            vkeys = dictSize(server.db[j].expires);
+            keys = dbSize(&server.db[j], DB_DICT);
+            vkeys = dbSize(&server.db[j], DB_EXPIRE);
             if (keys || vkeys) {
                 info = sdscatprintf(info,
                     "db%d:keys=%lld,expires=%lld,avg_ttl=%lld\r\n",

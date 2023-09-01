@@ -72,7 +72,7 @@ void bugReportStart(void);
 void printCrashReport(void);
 void bugReportEnd(int killViaSignal, int sig);
 void logStackTrace(void *eip, int uplevel);
-void dbGetStats(char *buf, size_t bufsize, redisDb *db, int full);
+void dbGetStats(char *buf, size_t bufsize, redisDb *db, int full, int dictType);
 
 /* ================================= Debugging ============================== */
 
@@ -285,9 +285,9 @@ void computeDatasetDigest(unsigned char *final) {
 
     for (j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
-        if (dbSize(db) == 0) continue;
+        if (dbSize(db, DB_DICT) == 0) continue;
         dbIterator dbit;
-        dbIteratorInit(&dbit, db);
+        dbIteratorInit(&dbit, db, DB_DICT);
 
         /* hash the DB id, so the same dataset moved in a different DB will lead to a different digest */
         aux = htonl(j);
@@ -904,11 +904,11 @@ NULL
             full = 1;
 
         stats = sdscatprintf(stats,"[Dictionary HT]\n");
-        dbGetStats(buf,sizeof(buf),&server.db[dbid],full);
+        dbGetStats(buf,sizeof(buf),&server.db[dbid],full, DB_DICT);
         stats = sdscat(stats,buf);
 
         stats = sdscatprintf(stats,"[Expires HT]\n");
-        dictGetStats(buf,sizeof(buf),server.db[dbid].expires,full);
+        dbGetStats(buf,sizeof(buf),&server.db[dbid],full, DB_EXPIRE);
         stats = sdscat(stats,buf);
 
         addReplyVerbatim(c,stats,sdslen(stats),"txt");

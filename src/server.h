@@ -965,7 +965,7 @@ typedef struct replBufBlock {
  * database. The database number is the 'id' field in the structure. */
 typedef struct redisDb {
     dict **dict;                /* The keyspace for this DB */
-    dict *expires;              /* Timeout of keys with a timeout set */
+    dict **expires;              /* Timeout of keys with a timeout set */
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
     dict *blocking_keys_unblock_on_nokey;   /* Keys with clients waiting for
                                              * data, and should be unblocked if key is deleted (XREADEDGROUP).
@@ -980,8 +980,13 @@ typedef struct redisDb {
     list *rehashing;            /* List of dictionaries in this DB that are currently rehashing. */
     int dict_count;             /* Indicates total number of dictionaires owned by this DB, 1 dict per slot in cluster mode. */
     unsigned long long key_count; /* Total number of keys in this DB. */
+    unsigned long long expires_key_count; /* Total number of keys in expires. */
     unsigned long long *slot_size_index;  /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
+    unsigned long long *expire_slot_size_index;  /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
 } redisDb;
+
+#define DB_DICT 0
+#define DB_EXPIRE 1
 
 /* forward declaration for functions ctx */
 typedef struct functionsLibCtx functionsLibCtx;
@@ -2417,14 +2422,16 @@ typedef struct dbIterator {
     int slot;
     int next_slot;
     dictIterator di;
+    int dictType;
 } dbIterator;
 
 /* DB iterator specific functions */
-void dbIteratorInit(dbIterator *dbit, redisDb *db);
+void dbIteratorInit(dbIterator *dbit, redisDb *db, int dictType);
 dict *dbIteratorNextDict(dbIterator *dbit);
+int dbIteratorNextSlot(dbIterator *dbit);
 dictEntry *dbIteratorNext(dbIterator *iter);
-int dbGetNextNonEmptySlot(redisDb *db, int slot);
-int findSlotByKeyIndex(redisDb *db, unsigned long target);
+int dbGetNextNonEmptySlot(redisDb *db, int slot, int dictType);
+int findSlotByKeyIndex(redisDb *db, unsigned long target, int dictType);
 
 /* SCAN specific commands for easy cursor manipulation, shared between main code and modules. */
 int getAndClearSlotIdFromCursor(unsigned long long *cursor);
@@ -3108,13 +3115,13 @@ void dismissMemoryInChild(void);
 #define RESTART_SERVER_GRACEFULLY (1<<0)     /* Do proper shutdown. */
 #define RESTART_SERVER_CONFIG_REWRITE (1<<1) /* CONFIG REWRITE before restart.*/
 int restartServer(int flags, mstime_t delay);
-unsigned long long dbSize(redisDb *db);
+unsigned long long int dbSize(redisDb *db, int dictType);
 int getKeySlot(sds key);
 int calculateKeySlot(sds key);
-unsigned long dbSlots(redisDb *db);
-int expandDb(const redisDb *db, uint64_t db_size);
-unsigned long long cumulativeKeyCountRead(redisDb *db, int idx);
-dict *getFairRandomDict(redisDb *db);
+unsigned long dbSlots(redisDb *db, int dictType);
+void expandDb(const redisDb *db, uint64_t db_size);
+unsigned long long cumulativeKeyCountRead(redisDb *db, int idx, int dictType);
+int getFairRandomSlot(redisDb *db, int dictType);
 
 /* Set data type */
 robj *setTypeCreate(sds value, size_t size_hint);

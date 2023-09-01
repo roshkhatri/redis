@@ -1305,7 +1305,7 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
     char *pname = (rdbflags & RDBFLAGS_AOF_PREAMBLE) ? "AOF rewrite" :  "RDB";
 
     redisDb *db = server.db + dbid;
-    unsigned long long db_size = dbSize(db);
+    unsigned long long int db_size = dbSize(db, DB_DICT);
     if (db_size == 0) return 0;
 
     /* Write the SELECT DB opcode */
@@ -1315,17 +1315,25 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
     written += res;
 
     /* Write the RESIZE DB opcode. */
-    uint64_t expires_size;
-    expires_size = dictSize(db->expires);
-    if ((res = rdbSaveType(rdb,RDB_OPCODE_RESIZEDB)) < 0) goto werr;
-    written += res;
-    if ((res = rdbSaveLen(rdb,db_size)) < 0) goto werr;
-    written += res;
-    if ((res = rdbSaveLen(rdb,expires_size)) < 0) goto werr;
-    written += res;
+    dbIterator xdbit;
+    dbIteratorInit(&xdbit, db, DB_EXPIRE);
+    int expires_last_slot = -1;
+    /* Iterate this DB writing every entry */
+    while ((de = dbIteratorNext(&xdbit)) != NULL) {
+        if (server.cluster_enabled && xdbit.slot != expires_last_slot) {
+            serverAssert(xdbit.slot >= 0 && xdbit.slot < CLUSTER_SLOTS);
+            if ((res = rdbSaveType(rdb,RDB_OPCODE_RESIZEDB)) < 0) goto werr; //FIX_ME similar to main dict
+            written += res;
+            if ((res = rdbSaveLen(rdb,xdbit.slot)) < 0) goto werr;
+            written += res;
+            if ((res = rdbSaveLen(rdb,dictSize(db->expires[xdbit.slot])) < 0)) goto werr;
+            written += res;
+            expires_last_slot = xdbit.slot;
+        }
+    }
 
     dbIterator dbit;
-    dbIteratorInit(&dbit, db);
+    dbIteratorInit(&dbit, db, DB_DICT);
     int last_slot = -1;
     /* Iterate this DB writing every entry */
     while ((de = dbIteratorNext(&dbit)) != NULL) {
@@ -3108,13 +3116,13 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
         } else if (type == RDB_OPCODE_RESIZEDB) {
             /* RESIZEDB: Hint about the size of the keys in the currently
              * selected data base, in order to avoid useless rehashing. */
-            uint64_t expires_size;
-            if ((db_size = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
+            uint64_t slot_id, slot_size;
+            if ((slot_id = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
                 goto eoferr;
-            if ((expires_size = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
+            if ((slot_size = rdbLoadLen(rdb,NULL)) == RDB_LENERR)
                 goto eoferr;
             /* Main dictionary will be resized after reading OPCODE set. Resizing only expires here. */
-            dictExpand(db->expires,expires_size);
+            dictExpand(db->expires[slot_id],slot_size); // FIX_ME
             continue; /* Read next opcode. */
         } else if (type == RDB_OPCODE_SLOT_INFO) {
             uint64_t slot_id, slot_size;

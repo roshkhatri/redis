@@ -20,17 +20,21 @@ void lazyfreeFreeObject(void *args[]) {
  * when the database was logically deleted. */
 void lazyfreeFreeDatabase(void *args[]) {
     dict **ht1 = (dict **) args[0];
-    dict *ht2 = (dict *) args[1];
+    dict **ht2 = (dict **) args[1];
     int *dictCount = (int *) args[2];
     for (int i=0; i<*dictCount; i++) {
         size_t numkeys = dictSize(ht1[i]);
+        size_t exp_numkeys = dictSize(ht2[i]);
         dictRelease(ht1[i]);
+        dictRelease(ht2[i]);
         atomicDecr(lazyfree_objects,numkeys);
         atomicIncr(lazyfreed_objects,numkeys);
+        atomicDecr(lazyfree_objects,exp_numkeys);
+        atomicIncr(lazyfreed_objects,exp_numkeys);
     }
     zfree(ht1);
+    zfree(ht2);
     zfree(dictCount);
-    dictRelease(ht2);
 }
 
 /* Release the key tracking table. */
@@ -179,10 +183,10 @@ void freeObjAsync(robj *key, robj *obj, int dbid) {
  * lazy freeing. */
 void emptyDbAsync(redisDb *db) {
     dict **oldDict = db->dict;
-    dict *oldExpires = db->expires;
-    atomicIncr(lazyfree_objects,dbSize(db));
+    dict **oldExpires = db->expires;
+    atomicIncr(lazyfree_objects,dbSize(db, DB_DICT));
     db->dict = dictCreateMultiple(&dbDictType, db->dict_count);
-    db->expires = dictCreate(&dbExpiresDictType);
+    db->expires = dictCreateMultiple(&dbExpiresDictType, db->dict_count);
     int *count = zmalloc(sizeof(int));
     *count = db->dict_count;
     bioCreateLazyFreeJob(lazyfreeFreeDatabase, 3, oldDict, oldExpires, count);

@@ -233,11 +233,11 @@ void activeExpireCycle(int type) {
             iteration++;
 
             /* If there is nothing to expire try next DB ASAP. */
-            if ((num = dictSize(db->expires)) == 0) {
+            if ((num = dbSize(db, DB_EXPIRE)) == 0) {
                 db->avg_ttl = 0;
                 break;
             }
-            slots = dictSlots(db->expires);
+            slots = db->dict_count;
             data.now = mstime();
 
             /* When there are less than 1% filled slots, sampling the key
@@ -268,9 +268,11 @@ void activeExpireCycle(int type) {
              * than keys in the same time. */
             long max_buckets = num*20;
             long checked_buckets = 0;
-
+            
             while (data.sampled < num && checked_buckets < max_buckets) {
-                db->expires_cursor = dictScan(db->expires, db->expires_cursor,
+                int slot = getAndClearSlotIdFromCursor((unsigned long long *)&db->expires_cursor);
+                dict *dict = db->expires[slot];
+                db->expires_cursor = dictScan(dict, db->expires_cursor, // FIX_ME
                                               expireScanCallback, &data);
                 checked_buckets++;
             }
@@ -378,7 +380,7 @@ void expireSlaveKeys(void) {
         while(dbids && dbid < server.dbnum) {
             if ((dbids & 1) != 0) {
                 redisDb *db = server.db+dbid;
-                dictEntry *expire = dictFind(db->expires,keyname);
+                dictEntry *expire = dictFind(db->expires[getKeySlot(keyname)],keyname);
                 int expired = 0;
 
                 if (expire &&
