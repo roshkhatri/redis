@@ -24,13 +24,10 @@ void lazyfreeFreeDatabase(void *args[]) {
     int *dictCount = (int *) args[2];
     for (int i=0; i<*dictCount; i++) {
         size_t numkeys = dictSize(ht1[i]);
-        size_t exp_numkeys = dictSize(ht2[i]);
         dictRelease(ht1[i]);
         dictRelease(ht2[i]);
         atomicDecr(lazyfree_objects,numkeys);
         atomicIncr(lazyfreed_objects,numkeys);
-        atomicDecr(lazyfree_objects,exp_numkeys);
-        atomicIncr(lazyfreed_objects,exp_numkeys);
     }
     zfree(ht1);
     zfree(ht2);

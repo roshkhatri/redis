@@ -711,7 +711,7 @@ NULL
         if (getPositiveLongFromObjectOrReply(c, c->argv[2], &keys, NULL) != C_OK)
             return;
 
-        if (expandDb(c->db, keys) == C_ERR) {
+        if (expandDb(c->db, keys, 0) == C_ERR) {
             addReplyError(c, "OOM in dictTryExpand");
             return;
         }

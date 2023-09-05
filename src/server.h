@@ -3119,7 +3119,7 @@ unsigned long long int dbSize(redisDb *db, int dictType);
 int getKeySlot(sds key);
 int calculateKeySlot(sds key);
 unsigned long dbSlots(redisDb *db, int dictType);
-void expandDb(const redisDb *db, uint64_t db_size);
+int expandDb(const redisDb *db, uint64_t db_size, uint64_t expire_db_size);
 unsigned long long cumulativeKeyCountRead(redisDb *db, int idx, int dictType);
 int getFairRandomSlot(redisDb *db, int dictType);
 

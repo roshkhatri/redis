@@ -2668,7 +2668,9 @@ void initServer(void) {
         server.db[j].rehashing = listCreate();
         server.db[j].dict_count = slotCount;
         server.db[j].key_count = 0;
+        server.db[j].expires_key_count = 0;
         server.db[j].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+        server.db[j].expire_slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
         listSetFreeMethod(server.db[j].defrag_later,(void (*)(void*))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */

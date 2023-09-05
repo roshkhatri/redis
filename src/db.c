@@ -639,7 +639,9 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
         dbarray[j].key_count = 0;
         if (server.cluster_enabled) {
             zfree(dbarray[j].slot_size_index);
+            zfree(dbarray[j].expire_slot_size_index);
             dbarray[j].slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
+            dbarray[j].expire_slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
         }
     }
 
@@ -709,6 +711,7 @@ redisDb *initTempDb(void) {
         tempDb[i].dict = dictCreateMultiple(&dbDictType, tempDb[i].dict_count);
         tempDb[i].expires = dictCreateMultiple(&dbExpiresDictType, tempDb[i].dict_count);
         tempDb[i].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+        tempDb[i].expire_slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
     }
 
     return tempDb;
@@ -729,6 +732,7 @@ void discardTempDb(redisDb *tempDb, void(callback)(dict*)) {
         zfree(tempDb[i].expires);
         if (server.cluster_enabled) {
             zfree(tempDb[i].slot_size_index);
+            zfree(tempDb[i].expire_slot_size_index);
         }
     }
 
@@ -1741,6 +1745,7 @@ int dbSwapDatabases(int id1, int id2) {
     db1->dict_count = db2->dict_count;
     db1->key_count = db2->key_count;
     db1->slot_size_index = db2->slot_size_index;
+    db1->expire_slot_size_index = db2->expire_slot_size_index;
 
     db2->dict = aux.dict;
     db2->expires = aux.expires;
@@ -1750,6 +1755,7 @@ int dbSwapDatabases(int id1, int id2) {
     db2->dict_count = aux.dict_count;
     db2->key_count = aux.key_count;
     db2->slot_size_index = aux.slot_size_index;
+    db2->expire_slot_size_index = aux.expire_slot_size_index;
 
     /* Now we need to handle clients blocked on lists: as an effect
      * of swapping the two DBs, a client that was waiting for list
@@ -1791,6 +1797,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         activedb->dict_count = newdb->dict_count;
         activedb->key_count = newdb->key_count;
         activedb->slot_size_index = newdb->slot_size_index;
+        activedb->expire_slot_size_index = newdb->expire_slot_size_index;
 
         newdb->dict = aux.dict;
         newdb->expires = aux.expires;
@@ -1800,6 +1807,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         newdb->dict_count = aux.dict_count;
         newdb->key_count = aux.key_count;
         newdb->slot_size_index = aux.slot_size_index;
+        newdb->expire_slot_size_index = aux.expire_slot_size_index;
 
         /* Now we need to handle clients blocked on lists: as an effect
          * of swapping the two DBs, a client that was waiting for list
@@ -2038,21 +2046,22 @@ int expireIfNeeded(redisDb *db, robj *key, int flags) {
 
 /* Increases size of the main db to match desired number. In cluster mode resizes all individual dictionaries for slots that
  * this node owns. */
-int expandDb(const redisDb *db, uint64_t db_size) {
+int expandDb(const redisDb *db, uint64_t db_size, uint64_t expire_db_size) {
+    int result = DICT_OK;
     if (server.cluster_enabled) {
         for (int i = 0; i < CLUSTER_SLOTS; i++) {
             if (clusterNodeGetSlotBit(server.cluster->myself, i)) {
                 /* We don't know exact number of keys that would fall into each slot, but we can approximate it, assuming even distribution. */
-                if (dictTryExpand(db->dict[i], (db_size / server.cluster->myself->numslots)) != DICT_OK) {
-                    return C_ERR;
-                }
+                if (db_size) result ^= dictTryExpand(db->dict[i], (db_size / server.cluster->myself->numslots));
+                if (expire_db_size) result ^= dictTryExpand(db->expires[i], (expire_db_size / server.cluster->myself->numslots));
             }
         }
     } else {
-        if (dictTryExpand(db->dict[0], db_size) != DICT_OK) {
-            return C_ERR;
-        }
+        int result = DICT_OK;
+        if (db_size) result ^= dictTryExpand(db->dict[0], db_size);
+        if (expire_db_size) result ^= dictTryExpand(db->expires[0], expire_db_size);
     }
+    if (result != DICT_OK) return C_ERR;
     return C_OK;
 }
 
