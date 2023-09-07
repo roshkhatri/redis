@@ -399,8 +399,15 @@ int dictExpandAllowed(size_t moreMem, double usedRatio) {
 void dictRehashingStarted(dict *d) {
     if (!server.cluster_enabled || !server.activerehashing) return;
     /* Safety check against queue overflow. */
-    if (listLength(server.db[0].db_type[DB_DICT].rehashing) > CLUSTER_SLOTS) return;
+    serverAssert(listLength(server.db[0].db_type[DB_DICT].rehashing) < CLUSTER_SLOTS);
     listAddNodeTail(server.db[0].db_type[DB_DICT].rehashing, d);
+}
+
+void dictRehashingStartedForExpires(dict *d) {
+    if (!server.cluster_enabled || !server.activerehashing) return;
+    /* Safety check against queue overflow. */
+    serverAssert(listLength(server.db[0].db_type[DB_EXPIRE].rehashing) < CLUSTER_SLOTS);
+    listAddNodeTail(server.db[0].db_type[DB_EXPIRE].rehashing, d);
 }
 
 /* Generic hash table type where keys are Redis Objects, Values
@@ -470,7 +477,7 @@ dictType dbExpiresDictType = {
     NULL,                       /* key destructor */
     NULL,                       /* val destructor */
     dictExpandAllowed,           /* allow to expand */
-    dictRehashingStarted,
+    dictRehashingStartedForExpires,
 };
 
 /* Command table. sds string -> command struct pointer. */
@@ -625,30 +632,35 @@ int incrementallyRehash(int dbid) {
         listNode *node, *nextNode;
         monotime timer;
         elapsedStart(&timer);
+        int j;
         /* Our goal is to rehash as many slot specific dictionaries as we can before reaching predefined threshold,
          * while removing those that already finished rehashing from the queue. */
-        while ((node = listFirst(server.db[dbid].db_type[DB_DICT].rehashing))) {
-            if (dictIsRehashing((dict *) listNodeValue(node))) {
-                dictRehashMilliseconds(listNodeValue(node), INCREMENTAL_REHASHING_THRESHOLD_MS);
-                if (elapsedMs(timer) >= INCREMENTAL_REHASHING_THRESHOLD_MS) {
-                    return 1;  /* Reached the time limit. */
+        for (j = 0; j < DICT_TYPE_MAX; j++) {
+            while ((node = listFirst(server.db[dbid].db_type[j].rehashing))) {
+                if (dictIsRehashing((dict *) listNodeValue(node))) {
+                    dictRehashMilliseconds(listNodeValue(node), INCREMENTAL_REHASHING_THRESHOLD_MS);
+                    if (elapsedMs(timer) >= INCREMENTAL_REHASHING_THRESHOLD_MS) {
+                        return 1;  /* Reached the time limit. */
+                    }
+                } else { /* It is possible that rehashing has already completed for this dictionary, simply remove it from the queue. */
+                    nextNode = listNextNode(node);
+                    listDelNode(server.db[dbid].db_type[j].rehashing, node);
+                    node = nextNode;
                 }
-            } else { /* It is possible that rehashing has already completed for this dictionary, simply remove it from the queue. */
-                nextNode = listNextNode(node);
-                listDelNode(server.db[dbid].db_type[DB_DICT].rehashing, node);
-                node = nextNode;
             }
         }
         /* When cluster mode is disabled, only one dict is used for the entire DB and rehashing list isn't populated. */
     } else {
-        dict *d = server.db[dbid].dict[0];
-        if (dictIsRehashing(d)) {
-            dictRehashMilliseconds(d, INCREMENTAL_REHASHING_THRESHOLD_MS);
+        /* Rehash main dict. */
+        dict *main_dict = server.db[dbid].dict[0];
+        if (main_dict) {
+            dictRehashMilliseconds(main_dict, INCREMENTAL_REHASHING_THRESHOLD_MS);
             return 1; /* already used our millisecond for this loop... */
         }
         /* Rehash expires. */
-        if (dictIsRehashing(server.db[dbid].expires[0])) {
-            dictRehashMilliseconds(server.db[dbid].expires[0], INCREMENTAL_REHASHING_THRESHOLD_MS);
+        dict *expires_dict = server.db[dbid].expires[0];
+        if (expires_dict) {
+            dictRehashMilliseconds(expires_dict, INCREMENTAL_REHASHING_THRESHOLD_MS);
             return 1; /* already used our millisecond for this loop... */
         }
     }
