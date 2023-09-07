@@ -960,6 +960,16 @@ typedef struct replBufBlock {
     char buf[];
 } replBufBlock;
 
+typedef struct dbState {
+    list *rehashing;
+    unsigned long long key_count;          /* Total number of keys in this DB. */
+    unsigned long long *slot_size_index;   /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
+} dbState;
+
+#define DICT_TYPE_MAX 2
+#define DB_DICT 0
+#define DB_EXPIRE 1
+
 /* Redis database representation. There are multiple databases identified
  * by integers from 0 (the default database) up to the max configured
  * database. The database number is the 'id' field in the structure. */
@@ -977,16 +987,9 @@ typedef struct redisDb {
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
     int resize_cursor;          /* Cron job uses this cursor to gradually resize dictionaries. */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
-    list *rehashing;            /* List of dictionaries in this DB that are currently rehashing. */
     int dict_count;             /* Indicates total number of dictionaires owned by this DB, 1 dict per slot in cluster mode. */
-    unsigned long long key_count; /* Total number of keys in this DB. */
-    unsigned long long expires_key_count; /* Total number of keys in expires. */
-    unsigned long long *slot_size_index;  /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
-    unsigned long long *expire_slot_size_index;  /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given slot. */
+    dbState db_type[DICT_TYPE_MAX];
 } redisDb;
-
-#define DB_DICT 0
-#define DB_EXPIRE 1
 
 /* forward declaration for functions ctx */
 typedef struct functionsLibCtx functionsLibCtx;

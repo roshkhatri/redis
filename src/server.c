@@ -399,8 +399,8 @@ int dictExpandAllowed(size_t moreMem, double usedRatio) {
 void dictRehashingStarted(dict *d) {
     if (!server.cluster_enabled || !server.activerehashing) return;
     /* Safety check against queue overflow. */
-    if (listLength(server.db[0].rehashing) > CLUSTER_SLOTS) return;
-    listAddNodeTail(server.db[0].rehashing, d);
+    if (listLength(server.db[0].db_type[DB_DICT].rehashing) > CLUSTER_SLOTS) return;
+    listAddNodeTail(server.db[0].db_type[DB_DICT].rehashing, d);
 }
 
 /* Generic hash table type where keys are Redis Objects, Values
@@ -627,7 +627,7 @@ int incrementallyRehash(int dbid) {
         elapsedStart(&timer);
         /* Our goal is to rehash as many slot specific dictionaries as we can before reaching predefined threshold,
          * while removing those that already finished rehashing from the queue. */
-        while ((node = listFirst(server.db[dbid].rehashing))) {
+        while ((node = listFirst(server.db[dbid].db_type[DB_DICT].rehashing))) {
             if (dictIsRehashing((dict *) listNodeValue(node))) {
                 dictRehashMilliseconds(listNodeValue(node), INCREMENTAL_REHASHING_THRESHOLD_MS);
                 if (elapsedMs(timer) >= INCREMENTAL_REHASHING_THRESHOLD_MS) {
@@ -635,7 +635,7 @@ int incrementallyRehash(int dbid) {
                 }
             } else { /* It is possible that rehashing has already completed for this dictionary, simply remove it from the queue. */
                 nextNode = listNextNode(node);
-                listDelNode(server.db[dbid].rehashing, node);
+                listDelNode(server.db[dbid].db_type[DB_DICT].rehashing, node);
                 node = nextNode;
             }
         }
@@ -2583,6 +2583,15 @@ void makeThreadKillable(void) {
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 }
 
+void initDbState(redisDb *db){
+    int i;
+    for (i = 0; i < DICT_TYPE_MAX; i++) {
+        db->db_type[i].rehashing = listCreate();
+        db->db_type[i].key_count = 0;
+        db->db_type[i].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+    }
+}
+
 void initServer(void) {
     int j;
 
@@ -2670,12 +2679,8 @@ void initServer(void) {
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
         server.db[j].defrag_later = listCreate();
-        server.db[j].rehashing = listCreate();
         server.db[j].dict_count = slotCount;
-        server.db[j].key_count = 0;
-        server.db[j].expires_key_count = 0;
-        server.db[j].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
-        server.db[j].expire_slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+        initDbState(&server.db[j]);
         listSetFreeMethod(server.db[j].defrag_later,(void (*)(void*))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */

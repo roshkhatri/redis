@@ -257,7 +257,7 @@ static void dbAddInternal(redisDb *db, robj *key, robj *val, int update_if_exist
     dictSetKey(d, de, sdsdup(key->ptr));
     initObjectLRUOrLFU(val);
     dictSetVal(d, de, val);
-    db->key_count++;
+    db->db_type[DB_DICT].key_count++;
     cumulativeKeyCountAdd(db, slot, 1, DB_DICT);
     signalKeyAsReady(db, key, val->type);
     notifyKeyspaceEvent(NOTIFY_NEW,"new",key,db->id);
@@ -304,7 +304,7 @@ int dbAddRDBLoad(redisDb *db, sds key, robj *val) {
     if (de == NULL) return 0;
     initObjectLRUOrLFU(val);
     dictSetVal(d, de, val);
-    db->key_count++;
+    db->db_type[DB_DICT].key_count++;
     cumulativeKeyCountAdd(db, slot, 1, DB_DICT);
     return 1;
 }
@@ -440,8 +440,7 @@ void cumulativeKeyCountAdd(redisDb *db, int slot, long delta, int dictType) {
     if (!server.cluster_enabled) return;
     int idx = slot + 1; /* Unlike slots, BIT is 1-based, so we need to add 1. */
     while (idx <= CLUSTER_SLOTS) {
-        if (dictType == DB_DICT) db->slot_size_index[idx] += delta;
-        else if (dictType == DB_EXPIRE) db->expire_slot_size_index[idx] += delta;
+        db->db_type[dictType].slot_size_index[idx] += delta;
         idx += (idx & -idx);
     }
 }
@@ -456,8 +455,7 @@ unsigned long long cumulativeKeyCountRead(redisDb *db, int slot, int dictType) {
     int idx = slot + 1;
     unsigned long long sum = 0;
     while (idx > 0) {
-        if (dictType == DB_DICT) sum += db->slot_size_index[idx];
-        else if (dictType == DB_EXPIRE) sum += db->expire_slot_size_index[idx];
+        sum += db->db_type[dictType].slot_size_index[idx];
         idx -= (idx & -idx);
     }
     return sum;
@@ -537,12 +535,12 @@ int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
         if (dictSize(db->expires[slot]) > 0) {
             if (dictDelete(db->expires[slot],key->ptr) == DICT_OK) {
                 cumulativeKeyCountAdd(db, slot, -1, DB_EXPIRE);
-                db->expires_key_count--;
+                db->db_type[DB_EXPIRE].key_count--;
             }
         } 
         dictTwoPhaseUnlinkFree(d,de,plink,table);
         cumulativeKeyCountAdd(db, slot, -1, DB_DICT);
-        db->key_count--;
+        db->db_type[DB_DICT].key_count--;
         return 1;
     } else {
         return 0;
@@ -637,13 +635,13 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
         dbarray[j].avg_ttl = 0;
         dbarray[j].expires_cursor = 0;
         dbarray[j].resize_cursor = 0;
-        dbarray[j].key_count = 0;
-        dbarray[j].expires_key_count = 0;
+        dbarray[j].db_type[DB_DICT].key_count = 0;
+        dbarray[j].db_type[DB_EXPIRE].key_count = 0;
         if (server.cluster_enabled) {
-            zfree(dbarray[j].slot_size_index);
-            zfree(dbarray[j].expire_slot_size_index);
-            dbarray[j].slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
-            dbarray[j].expire_slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
+            zfree(dbarray[j].db_type[DB_DICT].slot_size_index);
+            zfree(dbarray[j].db_type[DB_EXPIRE].slot_size_index);
+            dbarray[j].db_type[DB_DICT].slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
+            dbarray[j].db_type[DB_EXPIRE].slot_size_index = zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1));
         }
     }
 
@@ -712,8 +710,8 @@ redisDb *initTempDb(void) {
         tempDb[i].dict_count = (server.cluster_enabled) ? CLUSTER_SLOTS : 1;
         tempDb[i].dict = dictCreateMultiple(&dbDictType, tempDb[i].dict_count);
         tempDb[i].expires = dictCreateMultiple(&dbExpiresDictType, tempDb[i].dict_count);
-        tempDb[i].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
-        tempDb[i].expire_slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+        tempDb[i].db_type[DB_DICT].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
+        tempDb[i].db_type[DB_EXPIRE].slot_size_index = server.cluster_enabled ? zcalloc(sizeof(unsigned long long) * (CLUSTER_SLOTS + 1)) : NULL;
     }
 
     return tempDb;
@@ -733,8 +731,8 @@ void discardTempDb(redisDb *tempDb, void(callback)(dict*)) {
         zfree(tempDb[i].dict);
         zfree(tempDb[i].expires);
         if (server.cluster_enabled) {
-            zfree(tempDb[i].slot_size_index);
-            zfree(tempDb[i].expire_slot_size_index);
+            zfree(tempDb[i].db_type[DB_DICT].slot_size_index);
+            zfree(tempDb[i].db_type[DB_EXPIRE].slot_size_index);
         }
     }
 
@@ -1360,9 +1358,7 @@ void dbsizeCommand(client *c) {
 }
 
 unsigned long long int dbSize(redisDb *db, int dictType) {
-    if (dictType == DB_DICT) return db->key_count;
-    else if (dictType == DB_EXPIRE) return db->expires_key_count;
-    return -1;
+    return db->db_type[dictType].key_count;
 }
 
 unsigned long dbSlots(redisDb *db, int dictType) {
@@ -1745,10 +1741,7 @@ int dbSwapDatabases(int id1, int id2) {
     db1->expires_cursor = db2->expires_cursor;
     db1->resize_cursor = db2->resize_cursor;
     db1->dict_count = db2->dict_count;
-    db1->key_count = db2->key_count;
-    db1->expires_key_count = db2->expires_key_count;
-    db1->slot_size_index = db2->slot_size_index;
-    db1->expire_slot_size_index = db2->expire_slot_size_index;
+    memcpy(&db1->db_type, &db2->db_type, sizeof(db2->db_type));
 
     db2->dict = aux.dict;
     db2->expires = aux.expires;
@@ -1756,10 +1749,7 @@ int dbSwapDatabases(int id1, int id2) {
     db2->expires_cursor = aux.expires_cursor;
     db2->resize_cursor = aux.resize_cursor;
     db2->dict_count = aux.dict_count;
-    db2->key_count = aux.key_count;
-    db2->expires_key_count = aux.expires_key_count;
-    db2->slot_size_index = aux.slot_size_index;
-    db2->expire_slot_size_index = aux.expire_slot_size_index;
+    memcpy(&db2->db_type, &aux.db_type, sizeof(aux.db_type));
 
     /* Now we need to handle clients blocked on lists: as an effect
      * of swapping the two DBs, a client that was waiting for list
@@ -1799,10 +1789,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         activedb->expires_cursor = newdb->expires_cursor;
         activedb->resize_cursor = newdb->resize_cursor;
         activedb->dict_count = newdb->dict_count;
-        activedb->key_count = newdb->key_count;
-        activedb->expires_key_count = newdb->expires_key_count;
-        activedb->slot_size_index = newdb->slot_size_index;
-        activedb->expire_slot_size_index = newdb->expire_slot_size_index;
+        memcpy(&activedb->db_type, &newdb->db_type, sizeof(newdb->db_type));
 
         newdb->dict = aux.dict;
         newdb->expires = aux.expires;
@@ -1810,10 +1797,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         newdb->expires_cursor = aux.expires_cursor;
         newdb->resize_cursor = aux.resize_cursor;
         newdb->dict_count = aux.dict_count;
-        newdb->key_count = aux.key_count;
-        newdb->expires_key_count = aux.expires_key_count;
-        newdb->slot_size_index = aux.slot_size_index;
-        newdb->expire_slot_size_index = aux.expire_slot_size_index;
+        memcpy(&newdb->db_type, &aux.db_type, sizeof(aux.db_type));
 
         /* Now we need to handle clients blocked on lists: as an effect
          * of swapping the two DBs, a client that was waiting for list
@@ -1868,7 +1852,7 @@ void swapdbCommand(client *c) {
 
 int removeExpire(redisDb *db, robj *key) {
     if (dictDelete(db->expires[(getKeySlot(key->ptr))],key->ptr) == DICT_OK) {
-        db->expires_key_count--;
+        db->db_type[DB_EXPIRE].key_count--;
         cumulativeKeyCountAdd(db, getKeySlot(key->ptr), -1, DB_EXPIRE);
         return 1;
     } else {
@@ -1889,7 +1873,7 @@ void setExpire(client *c, redisDb *db, robj *key, long long when) {
     serverAssertWithInfo(NULL,key,kde != NULL);
     de = dictAddOrFind(db->expires[slot],dictGetKey(kde));
     dictSetSignedIntegerVal(de,when);
-    db->expires_key_count++;
+    db->db_type[DB_EXPIRE].key_count++;
     cumulativeKeyCountAdd(db, slot, 1, DB_EXPIRE);
 
     int writable_slave = server.masterhost && server.repl_slave_ro == 0;
