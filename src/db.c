@@ -1741,7 +1741,10 @@ int dbSwapDatabases(int id1, int id2) {
     db1->expires_cursor = db2->expires_cursor;
     db1->resize_cursor = db2->resize_cursor;
     db1->dict_count = db2->dict_count;
-    memcpy(&db1->db_type, &db2->db_type, sizeof(db2->db_type));
+    db1->db_type[DB_DICT].key_count = db2->db_type[DB_DICT].key_count;
+    db1->db_type[DB_EXPIRE].key_count = db2->db_type[DB_EXPIRE].key_count;
+    db1->db_type[DB_DICT].slot_size_index = db2->db_type[DB_DICT].slot_size_index;
+    db1->db_type[DB_EXPIRE].slot_size_index = db2->db_type[DB_EXPIRE].slot_size_index;
 
     db2->dict = aux.dict;
     db2->expires = aux.expires;
@@ -1749,7 +1752,10 @@ int dbSwapDatabases(int id1, int id2) {
     db2->expires_cursor = aux.expires_cursor;
     db2->resize_cursor = aux.resize_cursor;
     db2->dict_count = aux.dict_count;
-    memcpy(&db2->db_type, &aux.db_type, sizeof(aux.db_type));
+    db2->db_type[DB_DICT].key_count = aux.db_type[DB_DICT].key_count;
+    db2->db_type[DB_EXPIRE].key_count = aux.db_type[DB_EXPIRE].key_count;
+    db2->db_type[DB_DICT].slot_size_index = aux.db_type[DB_DICT].slot_size_index;
+    db2->db_type[DB_EXPIRE].slot_size_index = aux.db_type[DB_EXPIRE].slot_size_index;
 
     /* Now we need to handle clients blocked on lists: as an effect
      * of swapping the two DBs, a client that was waiting for list
@@ -1789,7 +1795,10 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         activedb->expires_cursor = newdb->expires_cursor;
         activedb->resize_cursor = newdb->resize_cursor;
         activedb->dict_count = newdb->dict_count;
-        memcpy(&activedb->db_type, &newdb->db_type, sizeof(newdb->db_type));
+        activedb->db_type[DB_DICT].key_count = newdb->db_type[DB_DICT].key_count;
+        activedb->db_type[DB_EXPIRE].key_count = newdb->db_type[DB_EXPIRE].key_count;
+        activedb->db_type[DB_DICT].slot_size_index = newdb->db_type[DB_DICT].slot_size_index;
+        activedb->db_type[DB_EXPIRE].slot_size_index = newdb->db_type[DB_EXPIRE].slot_size_index;
 
         newdb->dict = aux.dict;
         newdb->expires = aux.expires;
@@ -1797,7 +1806,10 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         newdb->expires_cursor = aux.expires_cursor;
         newdb->resize_cursor = aux.resize_cursor;
         newdb->dict_count = aux.dict_count;
-        memcpy(&newdb->db_type, &aux.db_type, sizeof(aux.db_type));
+        newdb->db_type[DB_DICT].key_count = aux.db_type[DB_DICT].key_count;
+        newdb->db_type[DB_EXPIRE].key_count = aux.db_type[DB_EXPIRE].key_count;
+        newdb->db_type[DB_DICT].slot_size_index = aux.db_type[DB_DICT].slot_size_index;
+        newdb->db_type[DB_EXPIRE].slot_size_index = aux.db_type[DB_EXPIRE].slot_size_index;
 
         /* Now we need to handle clients blocked on lists: as an effect
          * of swapping the two DBs, a client that was waiting for list
