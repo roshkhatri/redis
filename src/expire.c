@@ -271,9 +271,13 @@ void activeExpireCycle(int type) {
             
             while (data.sampled < num && checked_buckets < max_buckets) {
                 int slot = getAndClearSlotIdFromCursor((unsigned long long *)&db->expires_cursor);
-                dict *dict = db->expires[slot];
-                db->expires_cursor = dictScan(dict, db->expires_cursor, // FIX_ME
+                db->expires_cursor = dictScan(db->expires[slot], db->expires_cursor,
                                               expireScanCallback, &data);
+                if (db->expires_cursor == 0) {
+                    slot = dbGetNextNonEmptySlot(db, slot, DB_EXPIRE);
+                    if (slot < 0) break;
+                }
+                addSlotIdToCursor(slot, (unsigned long long *)&db->expires_cursor);
                 checked_buckets++;
             }
             total_expired += data.expired;

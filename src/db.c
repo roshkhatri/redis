@@ -92,7 +92,7 @@ void dbIteratorInit(dbIterator *dbit, redisDb *db, int dictType) { // DB and
     dbit->db = db;
     dbit->slot = -1;
     dbit->dictType = dictType;
-    dbit->next_slot = findSlotByKeyIndex(dbit->db, 1, dictType); /* Finds first non-empty slot. */
+    dbit->next_slot = findSlotByKeyIndex(dbit->db, 1, dbit->dictType); /* Finds first non-empty slot. */
     dictInitSafeIterator(&dbit->di, NULL);
 }
 
@@ -476,7 +476,7 @@ unsigned long keysInMid(redisDb *db, int mid, int dictType){
     if (dictType == DB_DICT) return dictSize(db->dict[mid]);
     else if (dictType == DB_EXPIRE) return dictSize(db->expires[mid]);
     return -1;
-}
+}   
 
 /* Finds a slot containing target element in a key space ordered by slot id.
  * Consider this example. Slots are represented by brackets and keys by dots:
@@ -535,9 +535,10 @@ int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
         /* Deleting an entry from the expires dict will not free the sds of
         * the key, because it is shared with the main dictionary. */
         if (dictSize(db->expires[slot]) > 0) {
-            dictDelete(db->expires[slot],key->ptr);
-            cumulativeKeyCountAdd(db, slot, -1, DB_EXPIRE);
-            db->expires_key_count--;
+            if (dictDelete(db->expires[slot],key->ptr) == DICT_OK) {
+                cumulativeKeyCountAdd(db, slot, -1, DB_EXPIRE);
+                db->expires_key_count--;
+            }
         } 
         dictTwoPhaseUnlinkFree(d,de,plink,table);
         cumulativeKeyCountAdd(db, slot, -1, DB_DICT);
@@ -637,6 +638,7 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async,
         dbarray[j].expires_cursor = 0;
         dbarray[j].resize_cursor = 0;
         dbarray[j].key_count = 0;
+        dbarray[j].expires_key_count = 0;
         if (server.cluster_enabled) {
             zfree(dbarray[j].slot_size_index);
             zfree(dbarray[j].expire_slot_size_index);
@@ -1744,6 +1746,7 @@ int dbSwapDatabases(int id1, int id2) {
     db1->resize_cursor = db2->resize_cursor;
     db1->dict_count = db2->dict_count;
     db1->key_count = db2->key_count;
+    db1->expires_key_count = db2->expires_key_count;
     db1->slot_size_index = db2->slot_size_index;
     db1->expire_slot_size_index = db2->expire_slot_size_index;
 
@@ -1754,6 +1757,7 @@ int dbSwapDatabases(int id1, int id2) {
     db2->resize_cursor = aux.resize_cursor;
     db2->dict_count = aux.dict_count;
     db2->key_count = aux.key_count;
+    db2->expires_key_count = aux.expires_key_count;
     db2->slot_size_index = aux.slot_size_index;
     db2->expire_slot_size_index = aux.expire_slot_size_index;
 
@@ -1796,6 +1800,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         activedb->resize_cursor = newdb->resize_cursor;
         activedb->dict_count = newdb->dict_count;
         activedb->key_count = newdb->key_count;
+        activedb->expires_key_count = newdb->expires_key_count;
         activedb->slot_size_index = newdb->slot_size_index;
         activedb->expire_slot_size_index = newdb->expire_slot_size_index;
 
@@ -1806,6 +1811,7 @@ void swapMainDbWithTempDb(redisDb *tempDb) {
         newdb->resize_cursor = aux.resize_cursor;
         newdb->dict_count = aux.dict_count;
         newdb->key_count = aux.key_count;
+        newdb->expires_key_count = aux.expires_key_count;
         newdb->slot_size_index = aux.slot_size_index;
         newdb->expire_slot_size_index = aux.expire_slot_size_index;
 
@@ -2057,7 +2063,6 @@ int expandDb(const redisDb *db, uint64_t db_size, uint64_t expire_db_size) {
             }
         }
     } else {
-        int result = DICT_OK;
         if (db_size) result ^= dictTryExpand(db->dict[0], db_size);
         if (expire_db_size) result ^= dictTryExpand(db->expires[0], expire_db_size);
     }

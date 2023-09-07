@@ -646,6 +646,11 @@ int incrementallyRehash(int dbid) {
             dictRehashMilliseconds(d, INCREMENTAL_REHASHING_THRESHOLD_MS);
             return 1; /* already used our millisecond for this loop... */
         }
+        /* Rehash expires. */
+        if (dictIsRehashing(server.db[dbid].expires[0])) {
+            dictRehashMilliseconds(server.db[dbid].expires[0], INCREMENTAL_REHASHING_THRESHOLD_MS);
+            return 1; /* already used our millisecond for this loop... */
+        }
     }
     return 0;
 }
