@@ -1413,6 +1413,10 @@ void clusterCommandSlots(client * c) {
      *               3) node ID
      *           ... continued until done
      */
+    if (getClusterSlotReplyLength()) {
+        addReplyfromCachedClusterSlot(c, getClusterSlotReply());
+        return;
+    }
     clusterNode *n = NULL;
     int num_masters = 0, start = -1;
     void *slot_replylen = addReplyDeferredLen(c);
@@ -1437,6 +1441,7 @@ void clusterCommandSlots(client * c) {
         }
     }
     setDeferredArrayLen(c, slot_replylen, num_masters);
+    setClusterSlotReply(c);
 }
 
 /* -----------------------------------------------------------------------------

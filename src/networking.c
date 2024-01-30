@@ -40,6 +40,7 @@
 
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
+void trimReplyUnusedTailSpace(client *c);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
@@ -447,6 +448,12 @@ void addReply(client *c, robj *obj) {
     } else {
         serverPanic("Wrong obj->encoding in addReply()");
     }
+}
+
+void addReplyfromCachedClusterSlot(client *c, sds cached_reply) {
+    if (prepareClientToWrite(c) != C_OK) return;
+    trimReplyUnusedTailSpace(c);
+    _addReplyToBufferOrList(c,cached_reply,sdslen(cached_reply));
 }
 
 /* Add the SDS 's' string to the client output buffer, as a side effect

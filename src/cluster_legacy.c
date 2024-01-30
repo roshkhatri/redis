@@ -109,6 +109,24 @@ static void clusterBuildMessageHdr(clusterMsg *hdr, int type, size_t msglen);
 void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 
+size_t getClusterSlotReplyLength(void) {
+    return sdslen(server.cluster->cached_cluster_slot_info);
+}
+
+sds getClusterSlotReply(void) {
+    return server.cluster->cached_cluster_slot_info;
+}
+
+void setClusterSlotReply(client *c) {
+    listIter *cached_reply_iter = listGetIterator(c->reply, AL_START_HEAD);
+    listNode *ln;
+    clientReplyBlock *val_block;
+    while((ln = listNext(cached_reply_iter))) {
+        val_block = (clientReplyBlock *)listNodeValue(ln);
+        server.cluster->cached_cluster_slot_info = sdscatlen(server.cluster->cached_cluster_slot_info, val_block->buf,val_block->used);
+    }
+}
+
 int getNodeDefaultClientPort(clusterNode *n) {
     return server.tls_cluster ? n->tls_port : n->tcp_port;
 }
@@ -1027,6 +1045,7 @@ void clusterInit(void) {
 
     server.cluster->mf_end = 0;
     server.cluster->mf_slave = NULL;
+    server.cluster->cached_cluster_slot_info = sdsempty();
     resetManualFailover();
     clusterUpdateMyselfFlags();
     clusterUpdateMyselfIp();

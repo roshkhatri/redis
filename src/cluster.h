@@ -114,4 +114,8 @@ int isValidAuxString(char *s, unsigned int length);
 void migrateCommand(client *c);
 void clusterCommand(client *c);
 ConnectionType *connTypeOfCluster(void);
+
+unsigned long getClusterSlotReplyLength(void);
+sds getClusterSlotReply(void);
+void setClusterSlotReply(client *c);
 #endif /* __CLUSTER_H */
