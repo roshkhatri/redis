@@ -1413,7 +1413,7 @@ void clusterCommandSlots(client * c) {
      *               3) node ID
      *           ... continued until done
      */
-    if (getClusterSlotReplyLength()) {
+    if (responseCachedVerify()) {
         addReplyfromCachedClusterSlot(c, getClusterSlotReply());
         return;
     }
