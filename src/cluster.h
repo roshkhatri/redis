@@ -117,5 +117,5 @@ ConnectionType *connTypeOfCluster(void);
 
 int responseCachedVerify(void);
 sds getClusterSlotReply(void);
-void setClusterSlotReply(client *c);
+void setClusterSlotReply(client *c, listNode *node, size_t used);
 #endif /* __CLUSTER_H */

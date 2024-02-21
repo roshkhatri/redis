@@ -110,23 +110,34 @@ void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 
 int responseCachedVerify(void) {
-    return (sdslen(server.cluster->cached_cluster_slot_info) && !server.cluster->change_in_cluster_topology);
+    return (sdslen(server.cluster->cached_cluster_slot_info));
 }
 
 sds getClusterSlotReply(void) {
     return server.cluster->cached_cluster_slot_info;
 }
 
-void setClusterSlotReply(client *c) {
-    sdsclear(server.cluster->cached_cluster_slot_info);
-    listIter *cached_reply_iter = listGetIterator(c->reply, AL_START_HEAD);
+void setClusterSlotReply(client *c, listNode *reply_last, size_t used) {
+    debugServerAssertWithInfo(c, NULL, sdslen(server.cluster->cached_cluster_slot_info)==0);
+
+    listIter li;
     listNode *ln;
     clientReplyBlock *val_block;
-    while((ln = listNext(cached_reply_iter))) {
+    listRewind(c->reply,&li);
+
+    if (used) {
+        while((ln = listNext(&li)) != reply_last);
+        val_block = (clientReplyBlock *)listNodeValue(ln);
+        if (used < val_block->used) {
+            size_t len_to_copy = val_block->used - used;
+            server.cluster->cached_cluster_slot_info = sdscatlen(server.cluster->cached_cluster_slot_info, sdsnew(val_block->buf + used), len_to_copy);
+        }
+    }
+
+    while ((ln = listNext(&li)) != NULL) {
         val_block = (clientReplyBlock *)listNodeValue(ln);
         server.cluster->cached_cluster_slot_info = sdscatlen(server.cluster->cached_cluster_slot_info, val_block->buf,val_block->used);
     }
-    server.cluster->change_in_cluster_topology = 0;
 }
 
 int getNodeDefaultClientPort(clusterNode *n) {
@@ -911,7 +922,7 @@ void clusterUpdateMyselfIp(void) {
 
 /* Update the hostname for the specified node with the provided C string. */
 static void updateAnnouncedHostname(clusterNode *node, char *new) {
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
     /* Previous and new hostname are the same, no need to update. */
     if (new && !strcmp(new, node->hostname)) {
         return;
@@ -1049,7 +1060,6 @@ void clusterInit(void) {
     server.cluster->mf_end = 0;
     server.cluster->mf_slave = NULL;
     server.cluster->cached_cluster_slot_info = sdsempty();
-    server.cluster->change_in_cluster_topology = 1;
     resetManualFailover();
     clusterUpdateMyselfFlags();
     clusterUpdateMyselfIp();
@@ -1108,7 +1118,7 @@ void clusterReset(int hard) {
 
     /* Unassign all the slots. */
     for (j = 0; j < CLUSTER_SLOTS; j++) clusterDelSlot(j);
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
 
     /* Recreate shards dict */
     dictEmpty(server.cluster->shards, NULL);
@@ -1590,7 +1600,7 @@ void clusterDelNode(clusterNode *delnode) {
 
     /* 3) Remove the node from the owning shard */
     clusterRemoveNodeFromShard(delnode);
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
 
     /* 4) Free the node, unlinking it from the cluster. */
     freeClusterNode(delnode);
@@ -2425,7 +2435,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
         for (j = 0; j < dirty_slots_count; j++)
             delKeysInSlot(dirty_slots[j]);
     }
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
 }
 
 /* Cluster ping extensions.
@@ -4091,7 +4101,7 @@ void clusterFailoverReplaceYourMaster(void) {
     /* 3) Update state and save config. */
     clusterUpdateState();
     clusterSaveConfigOrDie(1);
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
 
     /* 4) Pong all the other nodes so that they can update the state
      *    accordingly and detect that we switched to master role. */
@@ -4116,7 +4126,7 @@ void clusterHandleSlaveFailover(void) {
     int manual_failover = server.cluster->mf_end != 0 &&
                           server.cluster->mf_can_start;
     mstime_t auth_timeout, auth_retry_time;
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
 
     server.cluster->todo_before_sleep &= ~CLUSTER_TODO_HANDLE_FAILOVER;
 
@@ -4906,7 +4916,7 @@ int clusterDelNodeSlots(clusterNode *node) {
             deleted++;
         }
     }
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
     return deleted;
 }
 
@@ -4936,7 +4946,7 @@ void clusterUpdateState(void) {
     int reachable_masters = 0;
     static mstime_t among_minority_time;
     static mstime_t first_call_time = 0;
-    server.cluster->change_in_cluster_topology = 1;
+
     server.cluster->todo_before_sleep &= ~CLUSTER_TODO_UPDATE_STATE;
 
     /* If this is a master node, wait some time before turning the state
@@ -4948,7 +4958,10 @@ void clusterUpdateState(void) {
     if (first_call_time == 0) first_call_time = mstime();
     if (clusterNodeIsMaster(myself) &&
         server.cluster->state == CLUSTER_FAIL &&
-        mstime() - first_call_time < CLUSTER_WRITABLE_DELAY) return;
+        mstime() - first_call_time < CLUSTER_WRITABLE_DELAY) {
+            sdsclear(server.cluster->cached_cluster_slot_info);
+            return;
+        }
 
     /* Start assuming the state is OK. We'll turn it into FAIL if there
      * are the right conditions. */
@@ -4961,6 +4974,7 @@ void clusterUpdateState(void) {
                 server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
             {
                 new_state = CLUSTER_FAIL;
+                sdsclear(server.cluster->cached_cluster_slot_info);
                 break;
             }
         }
@@ -5096,7 +5110,7 @@ int verifyClusterConfigWithData(void) {
         }
     }
     if (update_config) clusterSaveConfigOrDie(1);
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
     return C_OK;
 }
 
@@ -5485,8 +5499,8 @@ int checkSlotAssignmentsOrReply(client *c, unsigned char *slots, int del, int st
 }
 
 void clusterUpdateSlots(client *c, unsigned char *slots, int del) {
-    server.cluster->change_in_cluster_topology = 1;
     int j;
+    sdsclear(server.cluster->cached_cluster_slot_info);
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (slots[j]) {
             int retval;
@@ -6055,7 +6069,7 @@ int clusterCommandSpecial(client *c) {
             int slot_was_mine = server.cluster->slots[slot] == myself;
             clusterDelSlot(slot);
             clusterAddSlot(n,slot);
-            server.cluster->change_in_cluster_topology = 1;
+            sdsclear(server.cluster->cached_cluster_slot_info);
 
             /* If we are a master left without slots, we should turn into a
              * replica of the new master. */
@@ -6389,7 +6403,7 @@ long long clusterNodeReplOffset(clusterNode *node) {
 }
 
 const char *clusterNodePreferredEndpoint(clusterNode *n) {
-    server.cluster->change_in_cluster_topology = 1;
+    sdsclear(server.cluster->cached_cluster_slot_info);
     char *hostname = clusterNodeHostname(n);
     switch (server.cluster_preferred_endpoint_type) {
         case CLUSTER_ENDPOINT_TYPE_IP:

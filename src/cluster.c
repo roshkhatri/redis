@@ -1417,6 +1417,15 @@ void clusterCommandSlots(client * c) {
         addReplyfromCachedClusterSlot(c, getClusterSlotReply());
         return;
     }
+    size_t used_reply_last;
+    listNode *reply_last = listLast(c->reply);
+    if (reply_last) {
+        clientReplyBlock *reply_last_block = (clientReplyBlock *)listNodeValue(reply_last);
+        used_reply_last = reply_last_block->used;
+    } else {
+        used_reply_last = 0;
+    }
+
     clusterNode *n = NULL;
     int num_masters = 0, start = -1;
     void *slot_replylen = addReplyDeferredLen(c);
@@ -1441,7 +1450,7 @@ void clusterCommandSlots(client * c) {
         }
     }
     setDeferredArrayLen(c, slot_replylen, num_masters);
-    setClusterSlotReply(c);
+    setClusterSlotReply(c, reply_last, used_reply_last);
 }
 
 /* -----------------------------------------------------------------------------
