@@ -117,16 +117,30 @@ sds getClusterSlotReply(void) {
     return server.cluster->cached_cluster_slot_info;
 }
 
-void setClusterSlotReply(client *c, listNode *reply_last, size_t used) {
+replyListLast *cacheReplyLastNode(client *c){
+    replyListLast *last = (replyListLast *)zmalloc(sizeof(replyListLast));
+    last->reply_last = listLast(c->reply);
+    if (last->reply_last) {
+        clientReplyBlock *reply_last_block = (clientReplyBlock *)listNodeValue(last->reply_last);
+        last->used_bytes = reply_last_block->used;
+    } else {
+        last->used_bytes = 0;
+    }
+    return last;
+}
+
+void setClusterSlotReply(client *c, replyListLast *reply_last) {
     debugServerAssertWithInfo(c, NULL, sdslen(server.cluster->cached_cluster_slot_info)==0);
 
+    listNode *reply_last_node = reply_last->reply_last;
+    size_t used = reply_last->used_bytes;
     listIter li;
     listNode *ln;
     clientReplyBlock *val_block;
     listRewind(c->reply,&li);
 
     if (used) {
-        while((ln = listNext(&li)) != reply_last);
+        while((ln = listNext(&li)) != reply_last_node);
         val_block = (clientReplyBlock *)listNodeValue(ln);
         if (used < val_block->used) {
             size_t len_to_copy = val_block->used - used;

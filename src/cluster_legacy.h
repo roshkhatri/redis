@@ -40,6 +40,11 @@ typedef struct clusterLink {
     int inbound;                /* 1 if this link is an inbound link accepted from the related node */
 } clusterLink;
 
+typedef struct replyListLast {
+    struct listNode *reply_last;
+    size_t used_bytes;
+} replyListLast;
+
 /* Cluster node flags and macros. */
 #define CLUSTER_NODE_MASTER 1     /* The node is a master */
 #define CLUSTER_NODE_SLAVE 2      /* The node is a slave */
