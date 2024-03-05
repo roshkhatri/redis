@@ -118,6 +118,9 @@ ConnectionType *connTypeOfCluster(void);
 
 int responseCachedVerify(void);
 sds getClusterSlotReply(void);
-void setClusterSlotReply(client *c, replyListLast *reply_last);
-replyListLast *cacheReplyLastNode(client *c);
+void clearClusterSlotsResp(void);
+sds getCmdResponseSds(client *f_c);
+void cacheSlotsResponse(client *f_c);
+client *initCaching(void);
+void stopCaching(client *c, client *recording_client);
 #endif /* __CLUSTER_H */

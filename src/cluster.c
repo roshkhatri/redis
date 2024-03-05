@@ -1418,10 +1418,10 @@ void clusterCommandSlots(client * c) {
         return;
     }
 
-    replyListLast *reply_last = cacheReplyLastNode(c);
+    client *recording_client = initCaching();
     clusterNode *n = NULL;
     int num_masters = 0, start = -1;
-    void *slot_replylen = addReplyDeferredLen(c);
+    void *slot_replylen = addReplyDeferredLen(recording_client);
 
     for (int i = 0; i <= CLUSTER_SLOTS; i++) {
         /* Find start node and slot id. */
@@ -1435,15 +1435,15 @@ void clusterCommandSlots(client * c) {
         /* Add cluster slots info when occur different node with start
          * or end of slot. */
         if (i == CLUSTER_SLOTS || n != getNodeBySlot(i)) {
-            addNodeReplyForClusterSlot(c, n, start, i-1);
+            addNodeReplyForClusterSlot(recording_client, n, start, i-1);
             num_masters++;
             if (i == CLUSTER_SLOTS) break;
             n = getNodeBySlot(i);
             start = i;
         }
     }
-    setDeferredArrayLen(c, slot_replylen, num_masters);
-    setClusterSlotReply(c, reply_last);
+    setDeferredArrayLen(recording_client, slot_replylen, num_masters);
+    stopCaching(c, recording_client);
 }
 
 /* -----------------------------------------------------------------------------

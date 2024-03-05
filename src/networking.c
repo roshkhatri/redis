@@ -450,11 +450,42 @@ void addReply(client *c, robj *obj) {
     }
 }
 
+sds getCmdResponseSds(client *f_c) {
+    
+    sds cmd_response = sdsempty();
+    listIter li;
+    listNode *ln;
+    clientReplyBlock *val_block;
+    listRewind(f_c->reply,&li);
+
+    while ((ln = listNext(&li)) != NULL) {
+        val_block = (clientReplyBlock *)listNodeValue(ln);
+        cmd_response = sdscatlen(cmd_response, val_block->buf,val_block->used);
+    }
+    serverLog(LL_NOTICE, "%lu",sdslen(cmd_response));
+    return cmd_response;
+}
+
 void addReplyfromCachedClusterSlot(client *c, sds cached_reply) {
     if (prepareClientToWrite(c) != C_OK) return;
     trimReplyUnusedTailSpace(c);
     _addReplyToBufferOrList(c,cached_reply,sdslen(cached_reply));
 }
+
+client *initCaching(void) {
+    struct client *fake_clent = createClient(NULL);
+    fake_clent->conn  = zcalloc(sizeof(connection));
+    return fake_clent;
+}
+
+void stopCaching(client *c, client *recording_client) {
+    zfree(recording_client->conn);
+    recording_client->conn = NULL;
+    cacheSlotsResponse(recording_client);
+    freeClient(recording_client);
+    addReplyfromCachedClusterSlot(c, getClusterSlotReply());
+}
+
 
 /* Add the SDS 's' string to the client output buffer, as a side effect
  * the SDS string is freed. */
