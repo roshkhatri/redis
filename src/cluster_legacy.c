@@ -4944,7 +4944,6 @@ void clusterUpdateState(void) {
     if (clusterNodeIsMaster(myself) &&
         server.cluster->state == CLUSTER_FAIL &&
         mstime() - first_call_time < CLUSTER_WRITABLE_DELAY) {
-            clearClusterSlotsResp();
             return;
         }
 
@@ -4959,7 +4958,6 @@ void clusterUpdateState(void) {
                 server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
             {
                 new_state = CLUSTER_FAIL;
-                clearClusterSlotsResp();
                 break;
             }
         }

@@ -462,7 +462,6 @@ sds getCmdResponseSds(client *f_c) {
         val_block = (clientReplyBlock *)listNodeValue(ln);
         cmd_response = sdscatlen(cmd_response, val_block->buf,val_block->used);
     }
-    serverLog(LL_NOTICE, "%lu",sdslen(cmd_response));
     return cmd_response;
 }
 
