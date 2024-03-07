@@ -109,8 +109,11 @@ static void clusterBuildMessageHdr(clusterMsg *hdr, int type, size_t msglen);
 void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 
-size_t responseCachedVerify(int conn_type) {
-    return (sdslen(server.cluster->cached_cluster_slot_info[conn_type]));
+size_t verifyResponseCached(int conn_type) {
+    if (server.cluster->cached_cluster_slot_info[conn_type]){
+        return (sdslen(server.cluster->cached_cluster_slot_info[conn_type]));
+    }
+    return 0;
 }
 
 sds getClusterSlotReply(int conn_type) {
@@ -121,14 +124,13 @@ void clearClusterSlotsResp(void) {
     for (int i = 0; i < 2; i++) {
         if (server.cluster->cached_cluster_slot_info[i]) {
             sdsfree(server.cluster->cached_cluster_slot_info[i]);
-            sdsclear(server.cluster->cached_cluster_slot_info[i]);
+            server.cluster->cached_cluster_slot_info[i] = NULL;
         }
     }
 }
 
 void cacheSlotsResponse(client *f_c, int conn_type) {
-    clearClusterSlotsResp();
-    server.cluster->cached_cluster_slot_info[conn_type] = sdscat(server.cluster->cached_cluster_slot_info[conn_type], getCmdResponseSds(f_c));
+    server.cluster->cached_cluster_slot_info[conn_type] = getCmdResponseSds(f_c);
 }
 
 int getNodeDefaultClientPort(clusterNode *n) {
@@ -1051,7 +1053,7 @@ void clusterInit(void) {
     server.cluster->mf_end = 0;
     server.cluster->mf_slave = NULL;
     for (int i=0 ; i<2; i++) {
-        server.cluster->cached_cluster_slot_info[i] = sdsempty();
+        server.cluster->cached_cluster_slot_info[i] = NULL;
     }
     resetManualFailover();
     clusterUpdateMyselfFlags();

@@ -1414,7 +1414,7 @@ void clusterCommandSlots(client * c) {
      *           ... continued until done
      */
     int conn_type = connIsTLS(c->conn);
-    if (responseCachedVerify(conn_type)) {
+    if (verifyResponseCached(conn_type)) {
         addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
         return;
     }

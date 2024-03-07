@@ -115,7 +115,7 @@ void migrateCommand(client *c);
 void clusterCommand(client *c);
 ConnectionType *connTypeOfCluster(void);
 
-size_t responseCachedVerify(int conn_type);
+size_t verifyResponseCached(int conn_type);
 sds getClusterSlotReply(int conn_type);
 void clearClusterSlotsResp(void);
 sds getCmdResponseSds(client *f_c);
