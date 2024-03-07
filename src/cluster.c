@@ -1413,8 +1413,9 @@ void clusterCommandSlots(client * c) {
      *               3) node ID
      *           ... continued until done
      */
-    if (responseCachedVerify()) {
-        addReplyfromCachedClusterSlot(c, getClusterSlotReply());
+    int conn_type = connIsTLS(c->conn);
+    if (responseCachedVerify(conn_type)) {
+        addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
         return;
     }
 
@@ -1443,7 +1444,7 @@ void clusterCommandSlots(client * c) {
         }
     }
     setDeferredArrayLen(recording_client, slot_replylen, num_masters);
-    stopCaching(c, recording_client);
+    stopCaching(c, recording_client, conn_type);
 }
 
 /* -----------------------------------------------------------------------------

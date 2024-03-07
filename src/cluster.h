@@ -23,7 +23,6 @@
 #define CLUSTER_REDIR_DOWN_RO_STATE 7 /* -CLUSTERDOWN, allow reads. */
 
 typedef struct _clusterNode clusterNode;
-typedef struct replyListLast replyListLast;
 struct clusterState;
 
 /* Flags that a module can set in order to prevent certain Redis Cluster
@@ -116,11 +115,11 @@ void migrateCommand(client *c);
 void clusterCommand(client *c);
 ConnectionType *connTypeOfCluster(void);
 
-int responseCachedVerify(void);
-sds getClusterSlotReply(void);
+size_t responseCachedVerify(int conn_type);
+sds getClusterSlotReply(int conn_type);
 void clearClusterSlotsResp(void);
 sds getCmdResponseSds(client *f_c);
-void cacheSlotsResponse(client *f_c);
+void cacheSlotsResponse(client *f_c, int conn_type);
 client *initCaching(void);
-void stopCaching(client *c, client *recording_client);
+void stopCaching(client *c, client *recording_client, int conn_type);
 #endif /* __CLUSTER_H */
