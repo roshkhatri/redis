@@ -515,6 +515,7 @@ int clusterLoadConfig(char *filename) {
         }
         *p = '\0';
         memcpy(n->ip,aux_argv[0],strlen(aux_argv[0])+1);
+        clearClusterSlotsResp();
         char *port = p+1;
         char *busp = strchr(port,'@');
         if (busp) {
@@ -1553,6 +1554,7 @@ void clusterAddNode(clusterNode *node) {
     retval = dictAdd(server.cluster->nodes,
             sdsnewlen(node->name,CLUSTER_NAMELEN), node);
     serverAssert(retval == DICT_OK);
+    clearClusterSlotsResp();
 }
 
 /* Remove a node from the cluster. The function performs the high level
@@ -1594,6 +1596,7 @@ void clusterDelNode(clusterNode *delnode) {
 
     /* 3) Remove the node from the owning shard */
     clusterRemoveNodeFromShard(delnode);
+    clearClusterSlotsResp();
 
     /* 4) Free the node, unlinking it from the cluster. */
     freeClusterNode(delnode);
@@ -2162,6 +2165,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 node->tls_port = msg_tls_port;
                 node->cport = ntohs(g->cport);
                 node->flags &= ~CLUSTER_NODE_NOADDR;
+                clearClusterSlotsResp();
             }
         } else {
             /* If it's not in NOADDR state and we don't have it, we
@@ -2256,6 +2260,7 @@ int nodeUpdateAddressIfNeeded(clusterNode *node, clusterLink *link,
     serverLog(LL_NOTICE,"Address updated for node %.40s (%s), now %s:%d",
         node->name, node->human_nodename, node->ip, getNodeDefaultClientPort(node)); 
 
+    clearClusterSlotsResp();
     /* Check if this is our master and we have to change the
      * replication target as well. */
     if (nodeIsSlave(myself) && myself->slaveof == node)
@@ -2428,7 +2433,6 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
         for (j = 0; j < dirty_slots_count; j++)
             delKeysInSlot(dirty_slots[j]);
     }
-    clearClusterSlotsResp();
 }
 
 /* Cluster ping extensions.
@@ -2817,6 +2821,7 @@ int clusterProcessPacket(clusterLink *link) {
                 strcmp(ip,myself->ip))
             {
                 memcpy(myself->ip,ip,NET_IP_STR_LEN);
+                clearClusterSlotsResp();
                 serverLog(LL_NOTICE,"IP address for this node updated to %s",
                     myself->ip);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
@@ -2899,6 +2904,7 @@ int clusterProcessPacket(clusterLink *link) {
                 link->node->cport = 0;
                 freeClusterLink(link);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
+                clearClusterSlotsResp();
                 return 0;
             }
         }
@@ -3487,6 +3493,7 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
     gossip->ping_sent = htonl(n->ping_sent/1000);
     gossip->pong_received = htonl(n->pong_received/1000);
     memcpy(gossip->ip,n->ip,sizeof(n->ip));
+    clearClusterSlotsResp();
     if (server.tls_cluster) {
         gossip->port = htons(n->tls_port);
         gossip->pport = htons(n->tcp_port);
@@ -4119,7 +4126,6 @@ void clusterHandleSlaveFailover(void) {
     int manual_failover = server.cluster->mf_end != 0 &&
                           server.cluster->mf_can_start;
     mstime_t auth_timeout, auth_retry_time;
-    clearClusterSlotsResp();
 
     server.cluster->todo_before_sleep &= ~CLUSTER_TODO_HANDLE_FAILOVER;
 
@@ -4152,6 +4158,8 @@ void clusterHandleSlaveFailover(void) {
         server.cluster->cant_failover_reason = CLUSTER_CANT_FAILOVER_NONE;
         return;
     }
+    
+    clearClusterSlotsResp();
 
     /* Set data_age to the number of milliseconds we are disconnected from
      * the master. */
@@ -4952,10 +4960,7 @@ void clusterUpdateState(void) {
     if (first_call_time == 0) first_call_time = mstime();
     if (clusterNodeIsMaster(myself) &&
         server.cluster->state == CLUSTER_FAIL &&
-        mstime() - first_call_time < CLUSTER_WRITABLE_DELAY) {
-            clearClusterSlotsResp();
-            return;
-        }
+        mstime() - first_call_time < CLUSTER_WRITABLE_DELAY) return;
 
     /* Start assuming the state is OK. We'll turn it into FAIL if there
      * are the right conditions. */
