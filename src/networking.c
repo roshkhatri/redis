@@ -477,12 +477,10 @@ client *initCaching(void) {
     return fake_clent;
 }
 
-void stopCaching(client *c, client *recording_client, int conn_type) {
+sds stopCaching(client *recording_client) {
     zfree(recording_client->conn);
     recording_client->conn = NULL;
-    cacheSlotsResponse(recording_client, conn_type);
-    freeClient(recording_client);
-    addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
+    return getCmdResponseSds(recording_client);
 }
 
 

@@ -1402,23 +1402,7 @@ void addNodeReplyForClusterSlot(client *c, clusterNode *node, int start_slot, in
     serverAssert(nested_elements == 3); /* Original 3 elements */
 }
 
-void clusterCommandSlots(client * c) {
-    /* Format: 1) 1) start slot
-     *            2) end slot
-     *            3) 1) master IP
-     *               2) master port
-     *               3) node ID
-     *            4) 1) replica IP
-     *               2) replica port
-     *               3) node ID
-     *           ... continued until done
-     */
-    int conn_type = connIsTLS(c->conn);
-    if (verifyResponseCached(conn_type)) {
-        addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
-        return;
-    }
-
+sds generateClusterSlotResponse(void) {
     client *recording_client = initCaching();
     clusterNode *n = NULL;
     int num_masters = 0, start = -1;
@@ -1444,7 +1428,31 @@ void clusterCommandSlots(client * c) {
         }
     }
     setDeferredArrayLen(recording_client, slot_replylen, num_masters);
-    stopCaching(c, recording_client, conn_type);
+    sds output = stopCaching(recording_client);
+    freeClient(recording_client);
+    return output;
+}
+
+void clusterCommandSlots(client * c) {
+    /* Format: 1) 1) start slot
+     *            2) end slot
+     *            3) 1) master IP
+     *               2) master port
+     *               3) node ID
+     *            4) 1) replica IP
+     *               2) replica port
+     *               3) node ID
+     *           ... continued until done
+     */
+    int conn_type = connIsTLS(c->conn);
+    if (verifyResponseCached(conn_type)) {
+        debugServerAssertWithInfo(c, NULL, sdscmp(getClusterSlotReply(conn_type), generateClusterSlotResponse()) == 0);
+        addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
+        return;
+    }
+
+    cacheSlotsResponse(generateClusterSlotResponse(), conn_type);
+    addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
 }
 
 /* -----------------------------------------------------------------------------
