@@ -2656,7 +2656,6 @@ static int updateClusterIp(const char **err) {
 int updateClusterHostname(const char **err) {
     UNUSED(err);
     clusterUpdateMyselfHostname();
-    // invalidateClusterSlotsResp(err);
     return 1;
 }
 

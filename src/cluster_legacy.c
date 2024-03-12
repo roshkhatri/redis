@@ -109,27 +109,27 @@ static void clusterBuildMessageHdr(clusterMsg *hdr, int type, size_t msglen);
 void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 
-int verifyResponseCached(int conn_type) {
-    if (server.cluster->cached_cluster_slot_info[conn_type]){
-        return (sdslen(server.cluster->cached_cluster_slot_info[conn_type]));
+int verifyResponseCached(enum connTypeForCaching conn_type) {
+    if (server.cluster->cached_cluster_slot_info[conn_type]) {
+        return sdslen(server.cluster->cached_cluster_slot_info[conn_type]);
     }
     return 0;
 }
 
-sds getClusterSlotReply(int conn_type) {
+sds getClusterSlotReply(enum connTypeForCaching conn_type) {
     return server.cluster->cached_cluster_slot_info[conn_type];
 }
 
 void clearClusterSlotsResp(void) {
-    for (int i = 0; i < 2; i++) {
-        if (server.cluster->cached_cluster_slot_info[i]) {
-            sdsfree(server.cluster->cached_cluster_slot_info[i]);
-            server.cluster->cached_cluster_slot_info[i] = NULL;
+    for (enum connTypeForCaching conn_type = 0; conn_type < CACHE_CONN_TYPE_MAX; conn_type++) {
+        if (server.cluster->cached_cluster_slot_info[conn_type]) {
+            sdsfree(server.cluster->cached_cluster_slot_info[conn_type]);
+            server.cluster->cached_cluster_slot_info[conn_type] = NULL;
         }
     }
 }
 
-void cacheSlotsResponse(sds response_to_cache, int conn_type) {
+void cacheSlotsResponse(sds response_to_cache, enum connTypeForCaching conn_type) {
     server.cluster->cached_cluster_slot_info[conn_type] = response_to_cache;
 }
 

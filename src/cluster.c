@@ -1428,9 +1428,9 @@ sds generateClusterSlotResponse(void) {
         }
     }
     setDeferredArrayLen(recording_client, slot_replylen, num_masters);
-    sds output = stopCaching(recording_client);
+    sds response = stopCaching(recording_client);
     freeClient(recording_client);
-    return output;
+    return response;
 }
 
 void clusterCommandSlots(client * c) {
@@ -1444,7 +1444,7 @@ void clusterCommandSlots(client * c) {
      *               3) node ID
      *           ... continued until done
      */
-    int conn_type = connIsTLS(c->conn);
+    enum connTypeForCaching conn_type = connIsTLS(c->conn);
     if (verifyResponseCached(conn_type)) {
         debugServerAssertWithInfo(c, NULL, sdscmp(getClusterSlotReply(conn_type), generateClusterSlotResponse()) == 0);
         addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
