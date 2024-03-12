@@ -115,10 +115,10 @@ void migrateCommand(client *c);
 void clusterCommand(client *c);
 ConnectionType *connTypeOfCluster(void);
 
-int verifyResponseCached(enum connTypeForCaching conn_type);
+int isClusterSlotsResponseCached(enum connTypeForCaching conn_type);
 sds getClusterSlotReply(enum connTypeForCaching conn_type);
 void clearClusterSlotsResp(void);
-sds getCmdResponseSds(client *f_c);
+sds getClientOutputBuffer(client *f_c);
 void cacheSlotsResponse(sds response_to_cache, enum connTypeForCaching conn_type);
 client *initCaching(void);
 sds stopCaching(client *recording_client);

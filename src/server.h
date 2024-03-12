@@ -2639,7 +2639,6 @@ void addReplyHelp(client *c, const char **help);
 void addExtendedReplyHelp(client *c, const char **help, const char **extended_help);
 void addReplySubcommandSyntaxError(client *c);
 void addReplyLoadedModules(client *c);
-void addReplyfromCachedClusterSlot(client *c, sds cached_reply);
 void copyReplicaOutputBuffer(client *dst, client *src);
 void addListRangeReply(client *c, robj *o, long start, long end, int reverse);
 void deferredAfterErrorReply(client *c, list *errors);

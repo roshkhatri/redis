@@ -1433,6 +1433,16 @@ sds generateClusterSlotResponse(void) {
     return response;
 }
 
+int verifyCachedClusterSlotsResponse(sds cached_response) {
+    sds generated_response = generateClusterSlotResponse();
+    if (sdscmp(generated_response, cached_response) == 0) {
+        sdsfree(generated_response);
+        return 1;
+    }
+    sdsfree(generated_response);
+    return 0;
+}
+
 void clusterCommandSlots(client * c) {
     /* Format: 1) 1) start slot
      *            2) end slot
@@ -1445,14 +1455,14 @@ void clusterCommandSlots(client * c) {
      *           ... continued until done
      */
     enum connTypeForCaching conn_type = connIsTLS(c->conn);
-    if (verifyResponseCached(conn_type)) {
-        debugServerAssertWithInfo(c, NULL, sdscmp(getClusterSlotReply(conn_type), generateClusterSlotResponse()) == 0);
-        addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
+    if (isClusterSlotsResponseCached(conn_type)) {
+        debugServerAssertWithInfo(c, NULL, verifyCachedClusterSlotsResponse(getClusterSlotReply(conn_type)) == 1);
+        addReplySds(c, sdsdup(getClusterSlotReply(conn_type)));
         return;
     }
 
     cacheSlotsResponse(generateClusterSlotResponse(), conn_type);
-    addReplyfromCachedClusterSlot(c, getClusterSlotReply(conn_type));
+    addReplySds(c, sdsdup(getClusterSlotReply(conn_type)));
 }
 
 /* -----------------------------------------------------------------------------

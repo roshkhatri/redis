@@ -109,9 +109,10 @@ static void clusterBuildMessageHdr(clusterMsg *hdr, int type, size_t msglen);
 void freeClusterLink(clusterLink *link);
 int verifyClusterNodeId(const char *name, int length);
 
-int verifyResponseCached(enum connTypeForCaching conn_type) {
-    if (server.cluster->cached_cluster_slot_info[conn_type]) {
-        return sdslen(server.cluster->cached_cluster_slot_info[conn_type]);
+int isClusterSlotsResponseCached(enum connTypeForCaching conn_type) {
+    if (server.cluster->cached_cluster_slot_info[conn_type] &&
+        sdslen(server.cluster->cached_cluster_slot_info[conn_type])) {
+        return 1;
     }
     return 0;
 }
@@ -121,7 +122,7 @@ sds getClusterSlotReply(enum connTypeForCaching conn_type) {
 }
 
 void clearClusterSlotsResp(void) {
-    for (enum connTypeForCaching conn_type = 0; conn_type < CACHE_CONN_TYPE_MAX; conn_type++) {
+    for (enum connTypeForCaching conn_type = CACHE_CONN_TCP; conn_type < CACHE_CONN_TYPE_MAX; conn_type++) {
         if (server.cluster->cached_cluster_slot_info[conn_type]) {
             sdsfree(server.cluster->cached_cluster_slot_info[conn_type]);
             server.cluster->cached_cluster_slot_info[conn_type] = NULL;
@@ -1053,8 +1054,8 @@ void clusterInit(void) {
 
     server.cluster->mf_end = 0;
     server.cluster->mf_slave = NULL;
-    for (int i=0 ; i<2; i++) {
-        server.cluster->cached_cluster_slot_info[i] = NULL;
+    for (enum connTypeForCaching conn_type = CACHE_CONN_TCP; conn_type < CACHE_CONN_TYPE_MAX; conn_type++) {
+        server.cluster->cached_cluster_slot_info[conn_type] = NULL;
     }
     resetManualFailover();
     clusterUpdateMyselfFlags();

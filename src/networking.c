@@ -450,8 +450,7 @@ void addReply(client *c, robj *obj) {
     }
 }
 
-sds getCmdResponseSds(client *f_c) {
-    
+sds getClientOutputBuffer(client *f_c) {
     sds cmd_response = sdsempty();
     listIter li;
     listNode *ln;
@@ -465,12 +464,6 @@ sds getCmdResponseSds(client *f_c) {
     return cmd_response;
 }
 
-void addReplyfromCachedClusterSlot(client *c, sds cached_reply) {
-    if (prepareClientToWrite(c) != C_OK) return;
-    trimReplyUnusedTailSpace(c);
-    _addReplyToBufferOrList(c,cached_reply,sdslen(cached_reply));
-}
-
 client *initCaching(void) {
     struct client *fake_clent = createClient(NULL);
     fake_clent->conn  = zcalloc(sizeof(connection));
@@ -480,7 +473,7 @@ client *initCaching(void) {
 sds stopCaching(client *recording_client) {
     zfree(recording_client->conn);
     recording_client->conn = NULL;
-    return getCmdResponseSds(recording_client);
+    return getClientOutputBuffer(recording_client);
 }
 
 
