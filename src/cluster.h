@@ -117,9 +117,6 @@ ConnectionType *connTypeOfCluster(void);
 
 int isClusterSlotsResponseCached(enum connTypeForCaching conn_type);
 sds getClusterSlotReply(enum connTypeForCaching conn_type);
-void clearClusterSlotsResp(void);
-sds getClientOutputBuffer(client *f_c);
+void clearCachedClusterSlotsResp(void);
 void cacheSlotsResponse(sds response_to_cache, enum connTypeForCaching conn_type);
-client *initCaching(void);
-sds stopCaching(client *recording_client);
 #endif /* __CLUSTER_H */

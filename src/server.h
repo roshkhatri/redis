@@ -2692,6 +2692,8 @@ void initThreadedIO(void);
 client *lookupClientByID(uint64_t id);
 int authRequired(client *c);
 void putClientInPendingWriteQueue(client *c);
+client *initCaching(void);
+sds stopCaching(client *recording_client);
 
 /* logreqres.c - logging of requests and responses */
 void reqresReset(client *c, int free_buf);

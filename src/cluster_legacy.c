@@ -121,7 +121,7 @@ sds getClusterSlotReply(enum connTypeForCaching conn_type) {
     return server.cluster->cached_cluster_slot_info[conn_type];
 }
 
-void clearClusterSlotsResp(void) {
+void clearCachedClusterSlotsResp(void) {
     for (enum connTypeForCaching conn_type = CACHE_CONN_TCP; conn_type < CACHE_CONN_TYPE_MAX; conn_type++) {
         if (server.cluster->cached_cluster_slot_info[conn_type]) {
             sdsfree(server.cluster->cached_cluster_slot_info[conn_type]);
@@ -516,7 +516,7 @@ int clusterLoadConfig(char *filename) {
         }
         *p = '\0';
         memcpy(n->ip,aux_argv[0],strlen(aux_argv[0])+1);
-        clearClusterSlotsResp();
+        clearCachedClusterSlotsResp();
         char *port = p+1;
         char *busp = strchr(port,'@');
         if (busp) {
@@ -929,7 +929,7 @@ static void updateAnnouncedHostname(clusterNode *node, char *new) {
     } else if (sdslen(node->hostname) != 0) {
         sdsclear(node->hostname);
     }
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
 }
 
@@ -1555,7 +1555,7 @@ void clusterAddNode(clusterNode *node) {
     retval = dictAdd(server.cluster->nodes,
             sdsnewlen(node->name,CLUSTER_NAMELEN), node);
     serverAssert(retval == DICT_OK);
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
 }
 
 /* Remove a node from the cluster. The function performs the high level
@@ -1597,7 +1597,7 @@ void clusterDelNode(clusterNode *delnode) {
 
     /* 3) Remove the node from the owning shard */
     clusterRemoveNodeFromShard(delnode);
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
 
     /* 4) Free the node, unlinking it from the cluster. */
     freeClusterNode(delnode);
@@ -2166,7 +2166,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 node->tls_port = msg_tls_port;
                 node->cport = ntohs(g->cport);
                 node->flags &= ~CLUSTER_NODE_NOADDR;
-                clearClusterSlotsResp();
+                clearCachedClusterSlotsResp();
             }
         } else {
             /* If it's not in NOADDR state and we don't have it, we
@@ -2261,7 +2261,7 @@ int nodeUpdateAddressIfNeeded(clusterNode *node, clusterLink *link,
     serverLog(LL_NOTICE,"Address updated for node %.40s (%s), now %s:%d",
         node->name, node->human_nodename, node->ip, getNodeDefaultClientPort(node)); 
 
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
     /* Check if this is our master and we have to change the
      * replication target as well. */
     if (nodeIsSlave(myself) && myself->slaveof == node)
@@ -2822,7 +2822,7 @@ int clusterProcessPacket(clusterLink *link) {
                 strcmp(ip,myself->ip))
             {
                 memcpy(myself->ip,ip,NET_IP_STR_LEN);
-                clearClusterSlotsResp();
+                clearCachedClusterSlotsResp();
                 serverLog(LL_NOTICE,"IP address for this node updated to %s",
                     myself->ip);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
@@ -2905,7 +2905,7 @@ int clusterProcessPacket(clusterLink *link) {
                 link->node->cport = 0;
                 freeClusterLink(link);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
-                clearClusterSlotsResp();
+                clearCachedClusterSlotsResp();
                 return 0;
             }
         }
@@ -3494,7 +3494,7 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
     gossip->ping_sent = htonl(n->ping_sent/1000);
     gossip->pong_received = htonl(n->pong_received/1000);
     memcpy(gossip->ip,n->ip,sizeof(n->ip));
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
     if (server.tls_cluster) {
         gossip->port = htons(n->tls_port);
         gossip->pport = htons(n->tcp_port);
@@ -4102,7 +4102,7 @@ void clusterFailoverReplaceYourMaster(void) {
     /* 3) Update state and save config. */
     clusterUpdateState();
     clusterSaveConfigOrDie(1);
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
 
     /* 4) Pong all the other nodes so that they can update the state
      *    accordingly and detect that we switched to master role. */
@@ -4159,8 +4159,7 @@ void clusterHandleSlaveFailover(void) {
         server.cluster->cant_failover_reason = CLUSTER_CANT_FAILOVER_NONE;
         return;
     }
-    
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
 
     /* Set data_age to the number of milliseconds we are disconnected from
      * the master. */
@@ -4886,7 +4885,7 @@ int clusterAddSlot(clusterNode *n, int slot) {
     if (server.cluster->slots[slot]) return C_ERR;
     clusterNodeSetSlotBit(n,slot);
     server.cluster->slots[slot] = n;
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
     return C_OK;
 }
 
@@ -4905,7 +4904,7 @@ int clusterDelSlot(int slot) {
     server.cluster->slots[slot] = NULL;
     /* Make owner_not_claiming_slot flag consistent with slot ownership information. */
     bitmapClearBit(server.cluster->owner_not_claiming_slot, slot);
-    clearClusterSlotsResp();
+    clearCachedClusterSlotsResp();
     return C_OK;
 }
 

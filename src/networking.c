@@ -40,7 +40,6 @@
 
 static void setProtocolError(const char *errstr, client *c);
 static void pauseClientsByClient(mstime_t end, int isPauseClientAll);
-void trimReplyUnusedTailSpace(client *c);
 int postponeClientRead(client *c);
 char *getClientSockname(client *c);
 int ProcessingEventsWhileBlocked = 0; /* See processEventsWhileBlocked(). */
@@ -318,6 +317,41 @@ int prepareClientToWrite(client *c) {
     return C_OK;
 }
 
+/* Returns everything in the client reply linked list in a SDS format.
+ * Primarily a helper function of `stopCaching` for caching command response
+ * from a recording client. */
+sds getClientOutputBuffer(client *c) {
+    sds cmd_response = sdsempty();
+    listIter li;
+    listNode *ln;
+    clientReplyBlock *val_block;
+    listRewind(c->reply,&li);
+
+    while ((ln = listNext(&li)) != NULL) {
+        val_block = (clientReplyBlock *)listNodeValue(ln);
+        cmd_response = sdscatlen(cmd_response, val_block->buf,val_block->used);
+    }
+    return cmd_response;
+}
+
+/* This function creates and returns a fake client for recording the command response 
+ * to initiate caching of any command response.
+ *
+ * It needs be paired with `stopCaching` function to stop caching. */
+client *initCaching(void) {
+    struct client *recording_client = createClient(NULL);
+    recording_client->conn  = zcalloc(sizeof(connection));
+    return recording_client;
+}
+
+/* This function is used to stop caching of any command response after `initCaching` is called.
+ * It returns the command response as SDS from the recording_client's reply buffer. */
+sds stopCaching(client *recording_client) {
+    zfree(recording_client->conn);
+    recording_client->conn = NULL;
+    return getClientOutputBuffer(recording_client);
+}
+
 /* -----------------------------------------------------------------------------
  * Low level functions to add more data to output buffers.
  * -------------------------------------------------------------------------- */
@@ -449,33 +483,6 @@ void addReply(client *c, robj *obj) {
         serverPanic("Wrong obj->encoding in addReply()");
     }
 }
-
-sds getClientOutputBuffer(client *f_c) {
-    sds cmd_response = sdsempty();
-    listIter li;
-    listNode *ln;
-    clientReplyBlock *val_block;
-    listRewind(f_c->reply,&li);
-
-    while ((ln = listNext(&li)) != NULL) {
-        val_block = (clientReplyBlock *)listNodeValue(ln);
-        cmd_response = sdscatlen(cmd_response, val_block->buf,val_block->used);
-    }
-    return cmd_response;
-}
-
-client *initCaching(void) {
-    struct client *fake_clent = createClient(NULL);
-    fake_clent->conn  = zcalloc(sizeof(connection));
-    return fake_clent;
-}
-
-sds stopCaching(client *recording_client) {
-    zfree(recording_client->conn);
-    recording_client->conn = NULL;
-    return getClientOutputBuffer(recording_client);
-}
-
 
 /* Add the SDS 's' string to the client output buffer, as a side effect
  * the SDS string is freed. */
