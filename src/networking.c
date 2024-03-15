@@ -320,13 +320,14 @@ int prepareClientToWrite(client *c) {
 /* Returns everything in the client reply linked list in a SDS format.
  * Primarily a helper function of `stopCaching` for caching command response
  * from a recording client. */
-sds getClientOutputBuffer(client *c) {
+static sds getClientOutputBuffer(client *c) {
     sds cmd_response = sdsempty();
     listIter li;
     listNode *ln;
     clientReplyBlock *val_block;
     listRewind(c->reply,&li);
-
+    
+    serverAssert(c->bufpos == 0);
     while ((ln = listNext(&li)) != NULL) {
         val_block = (clientReplyBlock *)listNodeValue(ln);
         cmd_response = sdscatlen(cmd_response, val_block->buf,val_block->used);

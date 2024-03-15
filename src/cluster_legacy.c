@@ -1509,6 +1509,7 @@ int clusterNodeAddSlave(clusterNode *master, clusterNode *slave) {
     master->slaves[master->numslaves] = slave;
     master->numslaves++;
     master->flags |= CLUSTER_NODE_MIGRATE_TO;
+    clearCachedClusterSlotsResp();
     return C_OK;
 }
 
@@ -2283,6 +2284,7 @@ void clusterSetNodeAsMaster(clusterNode *n) {
     n->flags |= CLUSTER_NODE_MASTER;
     n->slaveof = NULL;
 
+    clearCachedClusterSlotsResp();
     /* Update config and state. */
     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                          CLUSTER_TODO_UPDATE_STATE);
@@ -2327,7 +2329,9 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
         serverLog(LL_NOTICE,"Discarding UPDATE message about myself.");
         return;
     }
-
+    
+    clearCachedClusterSlotsResp();
+    
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (bitmapTestBit(slots,j)) {
             sender_slots++;
@@ -3494,7 +3498,6 @@ void clusterSetGossipEntry(clusterMsg *hdr, int i, clusterNode *n) {
     gossip->ping_sent = htonl(n->ping_sent/1000);
     gossip->pong_received = htonl(n->pong_received/1000);
     memcpy(gossip->ip,n->ip,sizeof(n->ip));
-    clearCachedClusterSlotsResp();
     if (server.tls_cluster) {
         gossip->port = htons(n->tls_port);
         gossip->pport = htons(n->tcp_port);
