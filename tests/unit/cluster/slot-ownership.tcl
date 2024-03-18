@@ -62,12 +62,13 @@ start_cluster 2 2 {tags {external:skip cluster}} {
         # Move $key_slot to node 1
         assert_equal [R 1 cluster setslot $key_slot node $nodeid] "OK"
 
-        wait_for_cluster_propagation
-
         puts [R 0 cluster slots]
         puts [R 1 cluster slots]
         puts [R 2 cluster slots]
         puts [R 3 cluster slots]
+        
+        wait_for_cluster_propagation
+
 
         # src master will delete keys in the slot
         wait_for_condition 50 100 {

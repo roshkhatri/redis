@@ -1439,6 +1439,7 @@ int verifyCachedClusterSlotsResponse(sds cached_response) {
         sdsfree(generated_response);
         return 1;
     }
+    serverLog(LL_NOTICE,"\ngenerated_response:\n%s\n\ncached_response:\n%s", generated_response, cached_response);
     sdsfree(generated_response);
     return 0;
 }
