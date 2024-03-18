@@ -65,6 +65,7 @@ list *clusterGetNodesInMyShard(clusterNode *node);
 int clusterNodeAddSlave(clusterNode *master, clusterNode *slave);
 int clusterAddSlot(clusterNode *n, int slot);
 int clusterDelSlot(int slot);
+int clusterMoveNodeSlots(clusterNode *from_node, clusterNode *to_node);
 int clusterDelNodeSlots(clusterNode *node);
 int clusterNodeSetSlotBit(clusterNode *n, int slot);
 void clusterSetMaster(clusterNode *n);
@@ -986,7 +987,7 @@ void clusterInit(void) {
     server.cluster->myself = NULL;
     server.cluster->currentEpoch = 0;
     server.cluster->state = CLUSTER_FAIL;
-    server.cluster->size = 1;
+    server.cluster->size = 0;
     server.cluster->todo_before_sleep = 0;
     server.cluster->nodes = dictCreate(&clusterNodesDictType);
     server.cluster->shards = dictCreate(&clusterSdsToListType);
@@ -1642,6 +1643,7 @@ void clusterRenameNode(clusterNode *node, char *newname) {
     serverAssert(retval == DICT_OK);
     memcpy(node->name, newname, CLUSTER_NAMELEN);
     clusterAddNode(node);
+    clusterAddNodeToShard(node->shard_id, node);
 }
 
 void clusterAddNodeToShard(const char *shard_id, clusterNode *node) {
@@ -2075,6 +2077,41 @@ static void getClientPortFromGossip(clusterMsgDataGossip *g, int *tls_port, int 
     }
 }
 
+/* Returns a string with the byte representation of the node ID (i.e. nodename)
+ * along with 8 trailing bytes for debugging purposes. */
+char *getCorruptedNodeIdByteString(clusterMsgDataGossip *gossip_msg) {
+    const int num_bytes = CLUSTER_NAMELEN + 8;
+    /* Allocate enough room for 4 chars per byte + null terminator */
+    char *byte_string = (char*) zmalloc((num_bytes*4) + 1); 
+    const char *name_ptr = gossip_msg->nodename;
+
+    /* Ensure we won't print beyond the bounds of the message */
+    serverAssert(name_ptr + num_bytes <= (char*)gossip_msg + sizeof(clusterMsgDataGossip));
+
+    for (int i = 0; i < num_bytes; i++) {
+        snprintf(byte_string + 4*i, 5, "\\x%02hhX", name_ptr[i]);
+    }
+    return byte_string;
+}
+
+/* Returns the number of nodes in the gossip with invalid IDs. */
+int verifyGossipSectionNodeIds(clusterMsgDataGossip *g, uint16_t count) {
+    int invalid_ids = 0;
+    for (int i = 0; i < count; i++) {
+        const char *nodename = g[i].nodename;
+        if (verifyClusterNodeId(nodename, CLUSTER_NAMELEN) != C_OK) {
+            invalid_ids++;
+            char *raw_node_id = getCorruptedNodeIdByteString(g);
+            serverLog(LL_WARNING,
+                      "Received gossip about a node with invalid ID %.40s. For debugging purposes, "
+                      "the 48 bytes including the invalid ID and 8 trailing bytes are: %s",
+                      nodename, raw_node_id);
+            zfree(raw_node_id);
+        }
+    }
+    return invalid_ids;
+}
+
 /* Process the gossip section of PING or PONG packets.
  * Note that this function assumes that the packet is already sanity-checked
  * by the caller, not in the content of the gossip section, but in the
@@ -2083,6 +2120,18 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
     uint16_t count = ntohs(hdr->count);
     clusterMsgDataGossip *g = (clusterMsgDataGossip*) hdr->data.ping.gossip;
     clusterNode *sender = link->node ? link->node : clusterLookupNode(hdr->sender, CLUSTER_NAMELEN);
+
+    /* Abort if the gossip contains invalid node IDs to avoid adding incorrect information to
+     * the nodes dictionary. An invalid ID indicates memory corruption on the sender side. */
+    int invalid_ids = verifyGossipSectionNodeIds(g, count);
+    if (invalid_ids) {
+        if (sender) {
+            serverLog(LL_WARNING, "Node %.40s (%s) gossiped %d nodes with invalid IDs.", sender->name, sender->human_nodename, invalid_ids);
+        } else {
+            serverLog(LL_WARNING, "Unknown node gossiped %d nodes with invalid IDs.", invalid_ids);
+        }
+        return;
+    }
 
     while(count--) {
         uint16_t flags = ntohs(g->flags);
@@ -2106,10 +2155,11 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
 
         /* Update our state accordingly to the gossip sections */
         node = clusterLookupNode(g->nodename, CLUSTER_NAMELEN);
-        if (node) {
+        /* Ignore gossips about self. */
+        if (node && node != myself) {
             /* We already know this node.
                Handle failure reports, only when the sender is a master. */
-            if (sender && clusterNodeIsMaster(sender) && node != myself) {
+            if (sender && clusterNodeIsMaster(sender)) {
                 if (flags & (CLUSTER_NODE_FAIL|CLUSTER_NODE_PFAIL)) {
                     if (clusterNodeAddFailureReport(node,sender)) {
                         serverLog(LL_VERBOSE,
@@ -2169,7 +2219,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 node->flags &= ~CLUSTER_NODE_NOADDR;
                 clearCachedClusterSlotsResp();
             }
-        } else {
+        } else if (!node) {
             /* If it's not in NOADDR state and we don't have it, we
              * add it to our trusted dict with exact nodeid and flag.
              * Note that we cannot simply start a handshake against
@@ -2190,6 +2240,7 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 node->tls_port = msg_tls_port;
                 node->cport = ntohs(g->cport);
                 clusterAddNode(node);
+                clusterAddNodeToShard(node->shard_id, node);
             }
         }
 
@@ -2635,11 +2686,23 @@ void clusterProcessPingExtensions(clusterMsg *hdr, clusterLink *link) {
         /* We know this will be valid since we validated it ahead of time */
         ext = getNextPingExt(ext);
     }
+
     /* If the node did not send us a hostname extension, assume
      * they don't have an announced hostname. Otherwise, we'll
      * set it now. */
     updateAnnouncedHostname(sender, ext_hostname);
     updateAnnouncedHumanNodename(sender, ext_humannodename);
+    /* If the node did not send us a shard-id extension, it means the sender
+     * does not support it (old version), node->shard_id is randomly generated.
+     * A cluster-wide consensus for the node's shard_id is not necessary.
+     * The key is maintaining consistency of the shard_id on each individual 7.2 node.
+     * As the cluster progressively upgrades to version 7.2, we can expect the shard_ids
+     * across all nodes to naturally converge and align.
+     *
+     * If sender is a replica, set the shard_id to the shard_id of its master.
+     * Otherwise, we'll set it now. */
+    if (ext_shardid == NULL) ext_shardid = clusterNodeGetMaster(sender)->shard_id;
+
     updateShardId(sender, ext_shardid);
 }
 
@@ -2968,7 +3031,50 @@ int clusterProcessPacket(clusterLink *link) {
 
                 if (clusterNodeIsMaster(sender)) {
                     /* Master turned into a slave! Reconfigure the node. */
-                    clusterDelNodeSlots(sender);
+                    if (master && !memcmp(master->shard_id, sender->shard_id, CLUSTER_NAMELEN)) {
+                        /* `sender` was a primary and was in the same shard as `master`, its new primary */
+                        if (sender->configEpoch > senderConfigEpoch) {
+                            serverLog(LL_NOTICE,
+                                    "Ignore stale message from %.40s (%s) in shard %.40s;"
+                                    " gossip config epoch: %llu, current config epoch: %llu", 
+                                    sender->name,
+                                    sender->human_nodename,
+                                    sender->shard_id,
+                                    (unsigned long long)senderConfigEpoch,
+                                    (unsigned long long)sender->configEpoch);
+                        } else {
+                            /* A failover occurred in the shard where `sender` belongs to and `sender` is no longer
+                             * a primary. Update slot assignment to `master`, which is the new primary in the shard */
+                            int slots = clusterMoveNodeSlots(sender, master);
+                            /* `master` is still a `slave` in this observer node's view; update its role and configEpoch */
+                            clusterSetNodeAsMaster(master);
+                            master->configEpoch = senderConfigEpoch;
+                            serverLog(LL_NOTICE, "A failover occurred in shard %.40s; node %.40s (%s)"
+                                    " lost %d slot(s) to node %.40s (%s) with a config epoch of %llu",
+                                    sender->shard_id,
+                                    sender->name,
+                                    sender->human_nodename,
+                                    slots,
+                                    master->name,
+                                    master->human_nodename,
+                                    (unsigned long long) master->configEpoch);
+                        }
+                    } else {
+                        /* `sender` was moved to another shard and has become a replica, remove its slot assignment */
+                        int slots = clusterDelNodeSlots(sender);
+                        serverLog(LL_NOTICE, "Node %.40s (%s) is no longer master of shard %.40s;"
+                                " removed all %d slot(s) it used to own",
+                                sender->name,
+                                sender->human_nodename,
+                                sender->shard_id,
+                                slots);
+                       if (master != NULL) {
+                           serverLog(LL_NOTICE, "Node %.40s (%s) is now part of shard %.40s",
+                                   sender->name,
+                                   sender->human_nodename,
+                                   master->shard_id);
+                        }
+                    }
                     sender->flags &= ~(CLUSTER_NODE_MASTER|
                                        CLUSTER_NODE_MIGRATE_TO);
                     sender->flags |= CLUSTER_NODE_SLAVE;
@@ -2984,6 +3090,10 @@ int clusterProcessPacket(clusterLink *link) {
                         clusterNodeRemoveSlave(sender->slaveof,sender);
                     clusterNodeAddSlave(master,sender);
                     sender->slaveof = master;
+
+                    /* Update the shard_id when a replica is connected to its
+                     * primary in the very first time. */
+                    updateShardId(sender, master->shard_id);
 
                     /* Update config. */
                     clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
@@ -3580,8 +3690,10 @@ void clusterSendPing(clusterLink *link, int type) {
         clusterNode *this = dictGetVal(de);
 
         /* Don't include this node: the whole packet header is about us
-         * already, so we just gossip about other nodes. */
-        if (this == myself) continue;
+         * already, so we just gossip about other nodes.
+         * Also, don't include the receiver. Receiver will not update its state
+         * based on gossips about itself. */
+        if (this == myself || this == link->node) continue;
 
         /* PFAIL nodes will be added later. */
         if (this->flags & CLUSTER_NODE_PFAIL) continue;
@@ -4715,10 +4827,13 @@ void clusterCron(void) {
             /* Timeout reached. Set the node as possibly failing if it is
              * not already in this state. */
             if (!(node->flags & (CLUSTER_NODE_PFAIL|CLUSTER_NODE_FAIL))) {
-                serverLog(LL_DEBUG,"*** NODE %.40s possibly failing",
-                    node->name);
                 node->flags |= CLUSTER_NODE_PFAIL;
                 update_state = 1;
+                if (clusterNodeIsMaster(myself) && server.cluster->size == 1) {
+                    markNodeAsFailingIfNeeded(node);                    
+                } else {
+                    serverLog(LL_DEBUG,"*** NODE %.40s possibly failing", node->name);
+                }
             }
         }
     }
@@ -4911,6 +5026,22 @@ int clusterDelSlot(int slot) {
     return C_OK;
 }
 
+/* Transfer slots from `from_node` to `to_node`.
+ * Iterates over all cluster slots, transferring each slot covered by `from_node` to `to_node`.
+ * Counts and returns the number of slots transferred.  */
+int clusterMoveNodeSlots(clusterNode *from_node, clusterNode *to_node) {
+    int processed = 0;
+
+    for (int j = 0; j < CLUSTER_SLOTS; j++) {
+        if (clusterNodeCoversSlot(from_node, j)) {
+            clusterDelSlot(j);
+            clusterAddSlot(to_node, j);
+            processed++;
+        }
+    }
+    return processed;
+}
+
 /* Delete all the slots associated with the specified node.
  * The number of deleted slots is returned. */
 int clusterDelNodeSlots(clusterNode *node) {
@@ -5080,7 +5211,7 @@ int verifyClusterConfigWithData(void) {
 
     /* Make sure we only have keys in DB0. */
     for (j = 1; j < server.dbnum; j++) {
-        if (dbSize(&server.db[j], DB_MAIN)) return C_ERR;
+        if (kvstoreSize(server.db[j].keys)) return C_ERR;
     }
 
     /* Check that all the slots we see populated memory have a corresponding
@@ -5116,7 +5247,7 @@ int verifyClusterConfigWithData(void) {
 
 /* Remove all the shard channel related information not owned by the current shard. */
 static inline void removeAllNotOwnedShardChannelSubscriptions(void) {
-    if (!server.shard_channel_count) return;
+    if (!kvstoreSize(server.pubsubshard_channels)) return;
     clusterNode *currmaster = clusterNodeIsMaster(myself) ? myself : myself->slaveof;
     for (int j = 0; j < CLUSTER_SLOTS; j++) {
         if (server.cluster->slots[j] != currmaster) {
@@ -5588,7 +5719,7 @@ void addShardReplyForClusterShards(client *c, list *nodes) {
     addReplyBulkCString(c, "slots");
 
     /* Use slot_info_pairs from the primary only */
-    while (n->slaveof != NULL) n = n->slaveof;
+    n = clusterNodeGetMaster(n);
 
     if (n->slot_info_pairs != NULL) {
         serverAssert((n->slot_info_pairs_count % 2) == 0);
@@ -5710,17 +5841,18 @@ void removeChannelsInSlot(unsigned int slot) {
     pubsubShardUnsubscribeAllChannelsInSlot(slot);
 }
 
-
-
 /* Remove all the keys in the specified hash slot.
  * The number of removed items is returned. */
 unsigned int delKeysInSlot(unsigned int hashslot) {
+    if (!kvstoreDictSize(server.db->keys, hashslot))
+        return 0;
+
     unsigned int j = 0;
 
-    dictIterator *iter = NULL;
+    kvstoreDictIterator *kvs_di = NULL;
     dictEntry *de = NULL;
-    iter = dictGetSafeIterator(server.db->dict[hashslot]);
-    while((de = dictNext(iter)) != NULL) {
+    kvs_di = kvstoreGetDictSafeIterator(server.db->keys, hashslot);
+    while((de = kvstoreDictIteratorNext(kvs_di)) != NULL) {
         enterExecutionUnit(1, 0);
         sds sdskey = dictGetKey(de);
         robj *key = createStringObject(sdskey, sdslen(sdskey));
@@ -5737,15 +5869,14 @@ unsigned int delKeysInSlot(unsigned int hashslot) {
         j++;
         server.dirty++;
     }
-    dictReleaseIterator(iter);
+    kvstoreReleaseDictIterator(kvs_di);
 
     return j;
 }
 
 /* Get the count of the channels for a given slot. */
 unsigned int countChannelsInSlot(unsigned int hashslot) {
-    dict *d = server.pubsubshard_channels[hashslot];
-    return d ? dictSize(d) : 0;
+    return kvstoreDictSize(server.pubsubshard_channels, hashslot);
 }
 
 int clusterNodeIsMyself(clusterNode *n) {
@@ -5819,12 +5950,12 @@ int handleDebugClusterCommand(client *c) {
 
     /* Terminate the link based on the direction or all. */
     if (!strcasecmp(c->argv[3]->ptr, "from")) {
-        freeClusterLink(n->inbound_link);
+        if (n->inbound_link) freeClusterLink(n->inbound_link);
     } else if (!strcasecmp(c->argv[3]->ptr, "to")) {
-        freeClusterLink(n->link);
+        if (n->link) freeClusterLink(n->link);
     } else if (!strcasecmp(c->argv[3]->ptr, "all")) {
-        freeClusterLink(n->link);
-        freeClusterLink(n->inbound_link);
+        if (n->link) freeClusterLink(n->link);
+        if (n->inbound_link) freeClusterLink(n->inbound_link);
     } else {
         addReplyErrorFormat(c, "Unknown direction %s", (char *) c->argv[3]->ptr);
     }
@@ -5847,6 +5978,11 @@ int clusterNodeIsSlave(clusterNode *node) {
 
 clusterNode *clusterNodeGetSlaveof(clusterNode *node) {
     return node->slaveof;
+}
+
+clusterNode *clusterNodeGetMaster(clusterNode *node) {
+    while (node->slaveof != NULL) node = node->slaveof;
+    return node;
 }
 
 char *clusterNodeGetName(clusterNode *node) {
@@ -5910,7 +6046,7 @@ int clusterCommandSpecial(client *c) {
         }
     } else if (!strcasecmp(c->argv[1]->ptr,"flushslots") && c->argc == 2) {
         /* CLUSTER FLUSHSLOTS */
-        if (dbSize(&server.db[0], DB_MAIN) != 0) {
+        if (kvstoreSize(server.db[0].keys) != 0) {
             addReplyError(c,"DB must be empty to perform CLUSTER FLUSHSLOTS.");
             return 1;
         }
@@ -6176,7 +6312,7 @@ int clusterCommandSpecial(client *c) {
          * slots nor keys to accept to replicate some other node.
          * Slaves can switch to another master without issues. */
         if (clusterNodeIsMaster(myself) &&
-            (myself->numslots != 0 || dbSize(&server.db[0], DB_MAIN) != 0)) {
+            (myself->numslots != 0 || kvstoreSize(server.db[0].keys) != 0)) {
             addReplyError(c,
                 "To set a master the node must be empty and "
                 "without assigned slots.");
@@ -6310,7 +6446,7 @@ int clusterCommandSpecial(client *c) {
 
         /* Slaves can be reset while containing data, but not master nodes
          * that must be empty. */
-        if (clusterNodeIsMaster(myself) && dbSize(c->db, DB_MAIN) != 0) {
+        if (clusterNodeIsMaster(myself) && kvstoreSize(c->db->keys) != 0) {
             addReplyError(c,"CLUSTER RESET can't be called with "
                             "master nodes containing keys");
             return 1;
