@@ -1382,6 +1382,7 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     node->repl_offset_time = 0;
     node->repl_offset = 0;
     listSetFreeMethod(node->fail_reports,zfree);
+    node->node_health = 0;
     return node;
 }
 
@@ -6560,4 +6561,44 @@ int clusterAllowFailoverCmd(client *c) {
 
 void clusterPromoteSelfToMaster(void) {
     replicationUnsetMaster();
+}
+
+void handleNodeHealthChangeForShard(list *nodes) {
+    serverAssert(listLength(nodes) > 0);
+    listIter li;
+    clusterNode *node;
+    int overall_health = 0;
+    listRewind(nodes, &li);
+    for (listNode *ln = listNext(&li); ln != NULL; ln = listNext(&li)) {
+        int present_node_heath;
+        node = listNodeValue(ln);
+
+        long long node_offset;
+        if (node->flags & CLUSTER_NODE_MYSELF) {
+            node_offset = nodeIsSlave(node) ? replicationGetSlaveOffset() : server.master_repl_offset;
+        } else {
+            node_offset = node->repl_offset;
+        }
+
+        if (nodeFailed(node) || (nodeIsSlave(node) && node_offset == 0)) {
+            present_node_heath = 0;
+        } else {
+            present_node_heath = 1;
+        }
+
+        if (present_node_heath != node->node_health) {
+            overall_health = 1;
+        }
+        node->node_health = present_node_heath;
+    }
+
+    if (overall_health) clearCachedClusterSlotsResp();
+}
+
+void checkNodesStateChange(void) {
+    dictIterator *di = dictGetSafeIterator(server.cluster->shards);
+    for(dictEntry *de = dictNext(di); de != NULL; de = dictNext(di)) {
+        handleNodeHealthChangeForShard(dictGetVal(de));
+    }
+    dictReleaseIterator(di);
 }

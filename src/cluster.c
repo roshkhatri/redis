@@ -1458,6 +1458,7 @@ void clusterCommandSlots(client * c) {
     enum connTypeForCaching conn_type = connIsTLS(c->conn);
 
     /* Check if we have a response cached for cluster slots for early exit. */
+    checkNodesStateChange();    
     if (isClusterSlotsResponseCached(conn_type)) {
         debugServerAssertWithInfo(c, NULL, verifyCachedClusterSlotsResponse(getClusterSlotReply(conn_type)) == 1);
         addReplySds(c, sdsdup(getClusterSlotReply(conn_type)));

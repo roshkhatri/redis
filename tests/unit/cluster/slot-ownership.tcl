@@ -14,26 +14,6 @@ start_cluster 2 2 {tags {external:skip cluster}} {
         } else {
             fail "Instance #3 master link status is not up"
         }
-        set online_count 4
-        puts [R 0 CLUSTER SHARDS]
-        while {$online_count} {
-            set shards_response [R 0 CLUSTER SHARDS]
-            foreach shard_response $shards_response {
-                set nodes [dict get $shard_response nodes]
-                foreach node $nodes {
-                    if {[dict get $node health] eq "online"} {
-                        incr online_count -1
-                        puts $online_count
-                        if {$online_count == 0} { break }
-                    }
-                }
-            }
-            if {$online_count == 0} { break }
-            incr online_count [expr {4 - $online_count}]
-            puts $online_count
-            puts [R 0 CLUSTER SHARDS]
-            after 1000
-        }
 
         # Set a single key that will be used to test deletion
         set key "FOO"
@@ -62,13 +42,7 @@ start_cluster 2 2 {tags {external:skip cluster}} {
         # Move $key_slot to node 1
         assert_equal [R 1 cluster setslot $key_slot node $nodeid] "OK"
 
-        puts [R 0 cluster slots]
-        puts [R 1 cluster slots]
-        puts [R 2 cluster slots]
-        puts [R 3 cluster slots]
-        
         wait_for_cluster_propagation
-
 
         # src master will delete keys in the slot
         wait_for_condition 50 100 {
